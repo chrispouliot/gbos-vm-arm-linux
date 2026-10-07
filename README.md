@@ -1,10 +1,10 @@
 # gbos-vm
 
-Runs the real Googlebook OS image in a VM on an Apple Silicon Mac — GPU-accelerated, with Chrome working.
+Runs a real Googlebook OS image in a VM on an Apple Silicon Mac — GPU-accelerated, with Chrome working.
 
 It's not an emulator image or a generic Android build. The install script downloads Google's own recovery image for the Dell Googlebook (ARM64, Android 17), swaps the hardware-specific bits for virtual ones, and boots it under QEMU with Vulkan passed through to Metal.
 
-> **Heads up:** this isn't affiliated with Google or Dell, and it's not a verified Googlebook. Read [What you're actually running](#what-youre-actually-running) before you sign into anything.
+> This isn't affiliated with Google or Dell, and it's not a verified Googlebook. Read [System Structure](#system-structure) before you sign into anything.
 
 ## Quick start
 
@@ -22,7 +22,7 @@ open "work/host/Googlebook VM.app"
 
 Drag that into your Dock if you want it there. It boots the VM when you open it and shuts Android down properly when you quit.
 
-The first boot takes about 45 seconds. If you land on a user picker, click **User** — there's no password.
+The first boot takes about 45 seconds on a M5 MacBook. If you land on a user picker, click **User** — there's no password.
 
 `install.sh` downloads about 9 GB and wants 60 GB free. On an M5 MacBook the build part takes around five minutes; the downloads take however long your connection takes.
 
@@ -44,7 +44,8 @@ We've only run this on one machine (M5, 16 GB, macOS 27). It *should* work on ot
 |---|---|
 | `⌃⌘F` | Full screen |
 | `⌃⌘M` | Cycle pointer modes |
-| `Esc` | Release a captured mouse |
+| `⌃⌥` | Release a captured mouse |
+| `⌃⌘R` | Restart the VM |
 | `⌘V` | Paste the Mac clipboard into the guest |
 | `⌘,` | Settings |
 
@@ -58,7 +59,7 @@ If you'd rather drive it from a terminal, `python3 run/launch.py work` does the 
 
 ### Pointer modes
 
-**Captured mouse** is the default: click the window to grab the mouse, `Esc` to let go. It's the classic VM experience — a plain USB mouse as far as Android is concerned, so it behaves.
+**Captured mouse** is the default: click the window to grab the mouse, `⌃⌥` to let go. It's the classic VM experience — a plain USB mouse as far as Android is concerned, so it behaves.
 
 There are two integrated modes where the pointer moves in and out of the window freely. They're labelled **experimental** because they're still kind of buggy:
 
@@ -67,18 +68,16 @@ There are two integrated modes where the pointer moves in and out of the window 
 
 Switch in the **Pointer** menu, in Settings, or with `⌃⌘M`. Your choice is remembered, and clipboard sync works in all three.
 
-## What you're actually running
+## System Structure
 
-This is the part to read.
-
-The image starts as Google's unmodified recovery download. We don't touch the system partitions — but a Googlebook expects hardware a VM doesn't have (a TPM, Trusty, a Qualcomm DSP, a specific GPU), so the **vendor partition gets rebuilt** with virtual-device replacements from Google's own Cuttlefish project:
+The image starts as Google's unmodified recovery download. We don't touch the system partitions — but Googlebook OS expects hardware our VM doesn't have (a TPM, Trusty, a Qualcomm DSP, a specific GPU), so the **vendor partition gets rebuilt** with virtual-device replacements from Google's own Cuttlefish project:
 
 - **Software KeyMint and Gatekeeper** instead of hardware-backed ones. Your keys aren't protected by a secure element, because there isn't one.
 - **No verified boot on the vendor partition.** The other partitions keep their original verity; the one we modify can't.
 - **Three extra SELinux rules**, all narrowly about graphics buffer sharing. SELinux stays enforcing.
 - **A helper running as the Android shell user** that takes pointer and clipboard input from the viewer. It only accepts a host that presents a random per-boot token, and it listens to nothing — it connects out to `127.0.0.1` on your Mac.
 
-So: treat it like a dev VM. It's great for poking at the OS. Don't make it the only place your important account lives.
+So: treat it like a dev VM. It's great for poking at the OS. I wouldn’t daily drive it or anything, but I’m sure some freaks (laudatory) will try.
 
 ## What doesn't work yet
 
@@ -89,15 +88,15 @@ So: treat it like a dev VM. It's great for poking at the OS. Don't make it the o
 - **Copying *out* of the guest, right-click, and long sessions** are implemented but haven't had a proper test. They might be fine. They might not.
 - **Audio was silent on one boot** and then worked. We don't know why yet.
 
-## How it works
+## The Custom Bits
 
-Three things had to be built for this, and they're the reason it isn't a weekend project:
+Three things had to be built for this:
 
 **Buffer sharing between GLES and Vulkan.** Android hands the same graphics buffer to both APIs. On Linux that's a dma-buf; macOS has no such thing. We back each shared buffer with POSIX shared memory and import it into both Metal and MoltenVK — patch in `patches/virglrenderer-android-interop.patch`.
 
 **Row pitch.** Metal wants texture rows padded to 16 bytes; Android doesn't. The fix turned out to be small: that memory only ever lives on the Mac side, so the host can use whatever pitch Metal wants and the guest never needs to know.
 
-**A pointer that isn't a mouse.** Android wouldn't accept QEMU's absolute tablet, and steering a relative mouse to match your real cursor drifts. So a tiny helper inside the guest creates a virtual drawing tablet — which Android treats as an absolute pointer — and the viewer feeds it coordinates.
+**A pointer that isn't a mouse.** Android wouldn't accept QEMU's absolute tablet, and steering a relative mouse to match your real cursor drifts. So a tiny helper inside the guest creates a virtual drawing tablet — which Android treats as an absolute pointer — and the viewer feeds it coordinates. This doesn’t work as well as we’d like, so capturing the cursor is most reliable still. We’re hoping to improve it.
 
 The rest is plumbing: `fetch.sh` gets the images, `build-host.sh` builds the patched renderer and viewer, `build-guest.sh` cross-compiles Mesa for Android, and `build-image.sh` assembles the disk.
 
