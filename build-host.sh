@@ -71,12 +71,13 @@ say "QEMU launcher with the hypervisor entitlement"
 clang -O2 "$ROOT/host/qemu-launcher.c" -o "$WORK/host/qemu-interop"
 codesign --force --sign - --entitlements "$ROOT/host/hypervisor.entitlements.plist" "$WORK/host/qemu-interop" 2>/dev/null
 
-say "Viewer app"
+say "Googlebook VM app"
 checkout "$COCOASPICE_REPO" "$COCOASPICE_COMMIT" "$WORK/src/CocoaSpice"
 if ! git -C "$WORK/src/CocoaSpice" apply --reverse --check "$ROOT/patches/cocoaspice-viewer.patch" 2>/dev/null; then
   git -C "$WORK/src/CocoaSpice" apply "$ROOT/patches/cocoaspice-viewer.patch"
 fi
-python3 "$ROOT/host/build_viewer.py" "$WORK/src/CocoaSpice" "$FW" "$ROOT/host/viewer.m" "$WORK/host" >/dev/null
+rm -rf "$WORK/host/Googlebook Viewer.app"
+python3 "$ROOT/host/build_viewer.py" "$WORK/src/CocoaSpice" "$FW" "$ROOT/host/viewer.m" "$WORK/host" "$ROOT/run" "$WORK" >/dev/null
 
 say "Host build complete: $WORK/host"
 ls -l "$WORK/host"

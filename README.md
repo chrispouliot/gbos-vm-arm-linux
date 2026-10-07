@@ -14,11 +14,13 @@ cd gbos-vm
 ./install.sh
 ```
 
-Then start it:
+Then open the app it built:
 
 ```bash
-python3 run/launch.py work
+open "work/host/Googlebook VM.app"
 ```
+
+Drag that into your Dock if you want it there. It boots the VM when you open it and shuts Android down properly when you quit.
 
 The first boot takes about 45 seconds. If you land on a user picker, click **User** — there's no password.
 
@@ -43,10 +45,15 @@ We've only run this on one machine (M5, 16 GB, macOS 27). It *should* work on ot
 | `⌃⌘F` | Full screen |
 | `⌃⌘M` | Cycle pointer modes: Android cursor → Mac cursor → captured mouse |
 | `⌘V` | Paste the Mac clipboard into the guest |
+| `⌘,` | Settings |
 
-Closing the window shuts Android down properly. Your data lives in `work/image/googlebook.raw` and sticks around between runs.
+Quitting (or closing the window) shuts Android down properly. Your data lives in `work/image/googlebook.raw` and sticks around between runs.
 
-The display defaults to your main screen's native width at 16:10. Pass `--display 1920x1200` (or whatever) to `launch.py` if you want something else, and `--fullscreen` to start that way.
+**Settings** (`⌘,`) has the pointer mode, resolution, memory, CPU cores, and toggles for networking and audio. Pointer mode changes right away; everything else is a VM option, so it applies the next time you start it.
+
+Resolution defaults to your display's native pixels at 16:10. On a notched MacBook that's exactly the area below the notch, so full screen is pixel-for-pixel.
+
+If you'd rather drive it from a terminal, `python3 run/launch.py work` does the same thing and takes `--display 1920x1200` and `--fullscreen`.
 
 ### Pointer modes
 
@@ -100,7 +107,7 @@ fetch.sh            downloads + verifies the Googlebook image, Cuttlefish, and U
 build-host.sh       patched virglrenderer, QEMU launcher, viewer
 build-guest.sh      Mesa (GLES + Vulkan), pointer helper, SELinux policy tool
 build-image.sh      assembles the bootable disk
-run/                launcher and VM runner
+run/                VM runner and a command-line launcher (the app bundles these)
 image/              the scripts that rebuild the vendor partition
 guest/  host/       sources for the bits we wrote
 patches/            our changes to virglrenderer, Mesa and CocoaSpice

@@ -34,7 +34,7 @@ def setting(key, default):
 
 def main():
     work = Path(sys.argv[1]).resolve()
-    viewer_app = work / 'host/Googlebook Viewer.app/Contents/MacOS/GooglebookViewer'
+    viewer_app = work / 'host/Googlebook VM.app/Contents/MacOS/GooglebookViewer'
     if not viewer_app.is_file(): sys.exit(f'viewer not built: {viewer_app}')
     if any(c.strip().endswith('/qemu-interop') for c in subprocess.check_output(['/bin/ps', '-axo', 'comm='], text=True).splitlines()):
         sys.exit('A Googlebook VM is already running; close it first.')

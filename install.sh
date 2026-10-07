@@ -12,4 +12,4 @@ ram_gb=$(( $(sysctl -n hw.memsize) / 1073741824 ))
 "$ROOT/build-host.sh"
 "$ROOT/build-guest.sh"
 "$ROOT/build-image.sh"
-say "Done. Start it with:  python3 \"$ROOT/run/launch.py\" \"$WORK\""
+say "Done. Open \"$WORK/host/Googlebook VM.app\" (drag it to your Dock if you like)."

@@ -144,6 +144,11 @@ static unsigned short scan[128] = {
 @property(nonatomic,strong) NSString *socketPath;
 @property(nonatomic) BOOL startFullscreen;
 @property(nonatomic,strong) NSWindow *settingsWindow;
+@property(nonatomic,strong) NSTask *vmTask;
+@property(nonatomic,strong) NSString *runDir;
+@property(nonatomic) BOOL quitting;
+@property(nonatomic) BOOL densitySent;
+@property(nonatomic) NSInteger guestDensity;
 @property(nonatomic,strong) NSPopUpButton *pointerPopup;
 - (void)syncSettingsWindow;
 @property(nonatomic,strong) dispatch_source_t selftest;
@@ -158,8 +163,10 @@ static unsigned short scan[128] = {
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
  [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"PointerMode":@0,@"Resolution":@"native",@"StartFullscreen":@NO,@"MemoryMiB":@4096,@"CPUs":@6,@"Networking":@YES,@"Audio":@YES}];
  self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1280,800) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
- self.window.title=@"Googlebook • Native Metal Viewer";self.window.subtitle=@"Connecting to the isolated VM…";self.window.delegate=self;self.window.acceptsMouseMovedEvents=YES;self.window.collectionBehavior=NSWindowCollectionBehaviorFullScreenPrimary;
+ self.window.title=@"Googlebook VM";self.window.subtitle=@"Connecting…";self.window.delegate=self;self.window.acceptsMouseMovedEvents=YES;self.window.collectionBehavior=NSWindowCollectionBehaviorFullScreenPrimary;
  self.view=[[VMView alloc] initWithFrame:self.window.contentView.bounds device:MTLCreateSystemDefaultDevice()];self.view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;self.view.preferredFramesPerSecond=120;self.view.clearColor=MTLClearColorMake(0,0,0,1);
+ // Started from the Dock or Finder (no socket argument): this app runs the VM itself.
+ if(!self.socketPath){setenv("VM_MOUSE_SEAMLESS","0",1);setenv("VM_MOUSE_RELATIVE","0",1);self.startFullscreen=[[NSUserDefaults standardUserDefaults] boolForKey:@"StartFullscreen"];}
  const char *sm=getenv("VM_MOUSE_SEAMLESS"),*gn=getenv("VM_MOUSE_GAIN");self.view.seamless=!(sm&&!strcmp(sm,"0"));
  const char *rl=getenv("VM_MOUSE_RELATIVE");self.view.relativeAllowed=!(rl&&!strcmp(rl,"0"))||[self pointerMode]==2;
  if(!self.view.relativeAllowed)dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(150*NSEC_PER_SEC)),dispatch_get_main_queue(),^{if(!self.view.absolute){self.view.relativeAllowed=YES;[self updateSubtitle];}});self.view.gain=(gn&&atof(gn)>0)?atof(gn):0.75;
@@ -169,8 +176,7 @@ static unsigned short scan[128] = {
  __weak App *weakSelf=self;self.view.sendLine=^(NSString *l){[weakSelf ctlSend:l];};[self startControlServer];
  [CSMain.sharedInstance spiceSetDebug:NO];
  if(![CSMain.sharedInstance spiceStart]){fprintf(stderr,"SPICE worker failed\n");[NSApp terminate:nil];return;}
- self.connection=[[CSConnection alloc] initWithUnixSocketFile:[NSURL fileURLWithPath:self.socketPath]];self.connection.audioEnabled=NO;self.connection.session.shareClipboard=NO;self.connection.delegate=self;
- [self.connection connect];
+ if(self.socketPath)[self connectSpice];else [self startVM];
  [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[self fit];}];
  // Self-test hook: SIGUSR1 steers the guest cursor to the centre of its screen.
  signal(SIGUSR1,SIG_IGN);dispatch_source_t usr=dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,SIGUSR1,0,dispatch_get_main_queue());
@@ -191,6 +197,74 @@ static unsigned short scan[128] = {
 - (void)windowDidResize:(NSNotification *)n{[self fit];}
 - (void)resyncPointer:(id)sender{[self.view resync];}
 - (void)toggleFull:(id)sender{[self.window toggleFullScreen:nil];}
+- (void)connectSpice {
+ self.connection=[[CSConnection alloc] initWithUnixSocketFile:[NSURL fileURLWithPath:self.socketPath]];self.connection.audioEnabled=NO;self.connection.session.shareClipboard=NO;self.connection.delegate=self;
+ [self.connection connect];
+}
+- (void)fail:(NSString *)message {
+ NSAlert *a=[NSAlert new];a.messageText=@"Googlebook VM couldn't start";a.informativeText=message;[a runModal];self.vmTask=nil;[NSApp terminate:nil];
+}
+// Self-starting mode: run the VM with the bundled runner script, wait for its display socket,
+// then connect. Quitting asks the runner to stop, which powers Android off cleanly first.
+- (void)startVM {
+ NSBundle *b=NSBundle.mainBundle;NSUserDefaults *d=[NSUserDefaults standardUserDefaults];
+ const char *e=getenv("GOOGLEBOOK_WORK");NSString *work=e?@(e):[b objectForInfoDictionaryKey:@"GBOSWork"];
+ NSString *runner=[b pathForResource:@"run_vm" ofType:@"py"];
+ if(!work||!runner||![[NSFileManager defaultManager] fileExistsAtPath:[work stringByAppendingPathComponent:@"image/googlebook.raw"]]){
+  [self fail:[NSString stringWithFormat:@"No VM image at %@/image. Run install.sh first, or rebuild the app if you moved the folder.",work?:@"(unknown)"]];return;}
+ NSString *res=[[d objectForKey:@"Resolution"] description];
+ if(![res containsString:@"x"]){
+  // "Match this Mac's display": the panel's native pixels, not the (possibly larger) scaled
+  // backing size macOS renders at. 16:10 height, which is the area below a MacBook notch.
+  NSScreen *sc=NSScreen.mainScreen;CGFloat w=sc.frame.size.width*sc.backingScaleFactor,h=sc.frame.size.height*sc.backingScaleFactor;
+  CGDirectDisplayID did=[sc.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
+  NSArray *modes=CFBridgingRelease(CGDisplayCopyAllDisplayModes(did,(__bridge CFDictionaryRef)@{(__bridge NSString *)kCGDisplayShowDuplicateLowResolutionModes:@YES}));
+  for(id m in modes){CGDisplayModeRef mode=(__bridge CGDisplayModeRef)m;
+   if(CGDisplayModeGetIOFlags(mode)&0x02000000 /* kDisplayModeNativeFlag */){w=CGDisplayModeGetPixelWidth(mode);h=CGDisplayModeGetPixelHeight(mode);break;}}
+  res=[NSString stringWithFormat:@"%.0fx%.0f",w,MIN(h,round(w/1.6))];}
+ self.guestDensity=(NSInteger)round(240.0*[res integerValue]/1920.0);
+ NSDateFormatter *f=[NSDateFormatter new];f.dateFormat=@"yyyyMMdd-HHmmss";NSString *name=[@"desktop-" stringByAppendingString:[f stringFromDate:[NSDate date]]];
+ self.runDir=[[work stringByAppendingPathComponent:@"logs"] stringByAppendingPathComponent:name];
+ NSMutableArray *args=[@[runner,work,name,@"--display",res,@"--memory",[[d objectForKey:@"MemoryMiB"] description],@"--cpus",[[d objectForKey:@"CPUs"] description]] mutableCopy];
+ if(![d boolForKey:@"Networking"])[args addObject:@"--offline"];
+ if(![d boolForKey:@"Audio"])[args addObject:@"--no-audio"];
+ NSTask *t=[NSTask new];t.executableURL=[NSURL fileURLWithPath:@"/usr/bin/python3"];t.arguments=args;
+ t.standardOutput=[NSFileHandle fileHandleWithNullDevice];t.standardError=[NSFileHandle fileHandleWithNullDevice];
+ __weak App *weak=self;
+ t.terminationHandler=^(NSTask *x){dispatch_async(dispatch_get_main_queue(),^{
+  App *me=weak;if(!me||me.vmTask!=x)return;me.vmTask=nil;
+  if(me.quitting)[NSApp replyToApplicationShouldTerminate:YES];
+  else if(me.connection)[NSApp terminate:nil];   // Android shut itself down
+  else [me fail:@"The VM exited before its display came up. Another Googlebook VM may already be running; otherwise check the newest folder under logs/."];
+ });};
+ NSError *err=nil;if(![t launchAndReturnError:&err]){[self fail:err.localizedDescription];return;}
+ self.vmTask=t;self.window.subtitle=@"Starting the VM…";
+ [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer){
+  if(!self.vmTask){[timer invalidate];return;}
+  NSFileManager *fm=[NSFileManager defaultManager];
+  if(!self.connection){
+   if(![fm fileExistsAtPath:[self.runDir stringByAppendingPathComponent:@"spice.sock"]])return;
+   NSString *tk=[NSString stringWithContentsOfFile:[self.runDir stringByAppendingPathComponent:@"token"] encoding:NSUTF8StringEncoding error:nil];
+   if(tk.length)setenv("VM_INPUT_TOKEN",tk.UTF8String,1);
+   self.socketPath=[self.runDir stringByAppendingPathComponent:@"spice.sock"];[self connectSpice];return;
+  }
+  if(self.densitySent){[timer invalidate];return;}
+  // Once Android is up, match the display density to the resolution (the setting persists).
+  NSData *log=[NSData dataWithContentsOfFile:[self.runDir stringByAppendingPathComponent:@"serial.log"]];
+  if(log&&[log rangeOfData:[@"VM_BOOT_COMPLETED" dataUsingEncoding:NSUTF8StringEncoding] options:0 range:NSMakeRange(0,log.length)].location!=NSNotFound){
+   self.densitySent=YES;
+   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(8*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+    NSTask *c=[NSTask new];c.executableURL=[NSURL fileURLWithPath:@"/usr/bin/python3"];
+    c.arguments=@[[NSBundle.mainBundle pathForResource:@"vm_control" ofType:@"py"],self.runDir,[NSString stringWithFormat:@"VM_DENSITY %ld",(long)self.guestDensity]];
+    [c launchAndReturnError:nil];});
+  }
+ }];
+}
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+ if(!self.vmTask||!self.vmTask.running)return NSTerminateNow;
+ self.quitting=YES;self.window.subtitle=@"Shutting Android down…";[self.view releaseCapture];[self.vmTask terminate];
+ return NSTerminateLater;
+}
 // Control link to the helper inside Android (scripts/guest_input): it connects
 // to this loopback port through the VM's NAT and takes pointer/clipboard lines.
 - (void)ctlSend:(NSString *)line {
@@ -335,7 +409,7 @@ static unsigned short scan[128] = {
 - (void)spiceForwardedPortClosed:(CSConnection *)c port:(CSPort *)p{}
 @end
 int main(int argc,char **argv){@autoreleasepool {
- if(argc<2||argc>3){fprintf(stderr,"Usage: GooglebookNative /absolute/path/to/spice.sock\n");return 2;}
+ if(argc>3){fprintf(stderr,"Usage: GooglebookViewer [/absolute/path/to/spice.sock [--fullscreen]]\n");return 2;}
  NSApplication *app=[NSApplication sharedApplication];[app setActivationPolicy:NSApplicationActivationPolicyRegular];
  // Menu bar. Actions have no target, so they reach the app delegate through the responder chain.
  NSMenu *bar=[NSMenu new];
@@ -354,5 +428,5 @@ int main(int argc,char **argv){@autoreleasepool {
  [pointerMenu addItem:[NSMenuItem separatorItem]];
  NSMenuItem *next=[pointerMenu addItemWithTitle:@"Next Pointer Mode" action:@selector(toggleCursor:) keyEquivalent:@"m"];next.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
  app.mainMenu=bar;
- App *delegate=[App new];delegate.socketPath=[NSString stringWithUTF8String:argv[1]];delegate.startFullscreen=argc==3&&!strcmp(argv[2],"--fullscreen");app.delegate=delegate;[app run];return 0;
+ App *delegate=[App new];if(argc>=2&&argv[1][0]=='/')delegate.socketPath=[NSString stringWithUTF8String:argv[1]];delegate.startFullscreen=argc==3&&!strcmp(argv[2],"--fullscreen");app.delegate=delegate;[app run];return 0;
 }}

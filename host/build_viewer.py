@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Build the viewer app.  build_viewer.py COCOASPICE_SRC UTM_FRAMEWORKS VIEWER_M OUT_DIR
-Links the SPICE client libraries that ship inside the UTM app (nothing is copied out of it)."""
-import plistlib, subprocess, sys
+"""Build the app.  build_viewer.py COCOASPICE_SRC UTM_FRAMEWORKS VIEWER_M OUT_DIR RUN_SCRIPTS_DIR WORK
+Links the SPICE client libraries that ship inside the UTM app (nothing is copied out of it).
+The app can start the VM itself: the runner scripts are bundled and WORK is recorded in Info.plist."""
+import plistlib, shutil, subprocess, sys
 from pathlib import Path
 
-src, frameworks, viewer_m, out = [Path(p).resolve() for p in sys.argv[1:5]]
+src, frameworks, viewer_m, out, run_scripts, work = [Path(p).resolve() for p in sys.argv[1:7]]
 S = src / 'Sources'
-app = out / 'Googlebook Viewer.app/Contents'
+app = out / 'Googlebook VM.app/Contents'
 build = out / 'viewer-build'
 for p in (app / 'MacOS', app / 'Resources', build / 'modules', build / 'module-cache'):
     p.mkdir(parents=True, exist_ok=True)
@@ -15,8 +16,10 @@ for p in (app / 'MacOS', app / 'Resources', build / 'modules', build / 'module-c
 shader = (S / 'CocoaSpiceRenderer/CSShaders.metal').read_text().replace(
     '#import "include/CSShaderTypes.h"', (S / 'CocoaSpiceRenderer/include/CSShaderTypes.h').read_text())
 (app / 'Resources/VMShaders.metal').write_text(shader)
+for name in ('run_vm.py', 'vm_control.py'):
+    shutil.copyfile(run_scripts / name, app / 'Resources' / name)
 (app / 'Info.plist').write_bytes(plistlib.dumps({
-    'CFBundleIdentifier': 'local.googlebook.viewer', 'CFBundleName': 'Googlebook',
+    'CFBundleIdentifier': 'local.googlebook.viewer', 'CFBundleName': 'Googlebook VM', 'GBOSWork': str(work),
     'CFBundleExecutable': 'GooglebookViewer', 'CFBundlePackageType': 'APPL', 'NSHighResolutionCapable': True}))
 skip = {'CSUSBDevice.m', 'CSUSBManager.m', 'CSSession+Sharing.m', 'gst_ios_init.m'}
 sources = [str(p) for p in sorted((S / 'CocoaSpice').glob('*.m')) if p.name not in skip]
