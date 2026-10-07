@@ -10,6 +10,8 @@ VIRGL_REPO="https://github.com/utmapp/virglrenderer.git"
 VIRGL_COMMIT="5d26f605f50f8e22002ec6db5fb775e1992d4e96"
 EPOXY_REPO="https://github.com/utmapp/libepoxy.git"
 EPOXY_COMMIT="bf98587477fe68d07b93319ece7b40a7d0e2eabe"
+# Build Mac binaries that also run on older macOS, not only the version they were built on.
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 # Parallel build jobs. Kept low on purpose: an uncapped Mesa build needs far more RAM.
 JOBS="${GBOS_JOBS:-4}"
 # Rebuilding replaces signed binaries and the disk image. Doing that under a running VM gets
