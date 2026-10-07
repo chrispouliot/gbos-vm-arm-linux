@@ -23,14 +23,29 @@ def native_display():
     return 1920, 1200
 
 
+def setting(key, default):
+    """Read one of the viewer's Settings values (stored in its macOS preferences)."""
+    try:
+        return subprocess.check_output(['/usr/bin/defaults', 'read', 'local.googlebook.viewer', key],
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        return default
+
+
 def main():
     work = Path(sys.argv[1]).resolve()
     viewer_app = work / 'host/Googlebook Viewer.app/Contents/MacOS/GooglebookViewer'
     if not viewer_app.is_file(): sys.exit(f'viewer not built: {viewer_app}')
     if any(c.strip().endswith('/qemu-interop') for c in subprocess.check_output(['/bin/ps', '-axo', 'comm='], text=True).splitlines()):
         sys.exit('A Googlebook VM is already running; close it first.')
+    resolution = setting('Resolution', 'native')
     if '--display' in sys.argv: width, height = [int(x) for x in sys.argv[sys.argv.index('--display') + 1].split('x')]
+    elif 'x' in resolution: width, height = [int(x) for x in resolution.split('x')]
     else: width, height = native_display()
+    fullscreen = '--fullscreen' in sys.argv or setting('StartFullscreen', '0') == '1'
+    options = ['--memory', setting('MemoryMiB', '4096'), '--cpus', setting('CPUs', '6')]
+    if setting('Networking', '1') == '0': options.append('--offline')
+    if setting('Audio', '1') == '0': options.append('--no-audio')
     density = round(240 * width / 1920)
     name = 'desktop-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     run_dir = work / 'logs' / name
@@ -39,7 +54,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupt); signal.signal(signal.SIGINT, interrupt)
     print(f'Googlebook desktop {width}x{height}: {name}. If you see the user picker, click "User".', flush=True)
     try:
-        vm = subprocess.Popen([sys.executable, str(HERE / 'run_vm.py'), str(work), name, '--display', f'{width}x{height}'],
+        vm = subprocess.Popen([sys.executable, str(HERE / 'run_vm.py'), str(work), name, '--display', f'{width}x{height}'] + options,
                               start_new_session=True); children.append(vm)
         sock = run_dir / 'spice.sock'; deadline = time.monotonic() + 30
         while not sock.exists():
@@ -49,7 +64,7 @@ def main():
         # screen, and unplugging it while the helper's tablet registers crashed system_server.
         venv = dict(os.environ, VM_MOUSE_SEAMLESS='0', VM_MOUSE_RELATIVE='0', VM_INPUT_TOKEN=(run_dir / 'token').read_text())
         with (run_dir / 'viewer.log').open('w') as log:
-            viewer = subprocess.Popen([str(viewer_app), str(sock)] + (['--fullscreen'] if '--fullscreen' in sys.argv else []),
+            viewer = subprocess.Popen([str(viewer_app), str(sock)] + (['--fullscreen'] if fullscreen else []),
                                       env=venv, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             children.append(viewer)
             serial = run_dir / 'serial.log'; configured = False; start = time.monotonic()

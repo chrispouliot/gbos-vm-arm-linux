@@ -143,6 +143,9 @@ static unsigned short scan[128] = {
 @property(nonatomic,strong) CSDisplay *display;
 @property(nonatomic,strong) NSString *socketPath;
 @property(nonatomic) BOOL startFullscreen;
+@property(nonatomic,strong) NSWindow *settingsWindow;
+@property(nonatomic,strong) NSPopUpButton *pointerPopup;
+- (void)syncSettingsWindow;
 @property(nonatomic,strong) dispatch_source_t selftest;
 @property(nonatomic,strong) dispatch_source_t selftest2;
 @property(nonatomic,strong) dispatch_source_t acceptSource;
@@ -153,6 +156,7 @@ static unsigned short scan[128] = {
 @end
 @implementation App
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+ [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"PointerMode":@0,@"Resolution":@"native",@"StartFullscreen":@NO,@"MemoryMiB":@4096,@"CPUs":@6,@"Networking":@YES,@"Audio":@YES}];
  self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1280,800) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
  self.window.title=@"Googlebook • Native Metal Viewer";self.window.subtitle=@"Connecting to the isolated VM…";self.window.delegate=self;self.window.acceptsMouseMovedEvents=YES;self.window.collectionBehavior=NSWindowCollectionBehaviorFullScreenPrimary;
  self.view=[[VMView alloc] initWithFrame:self.window.contentView.bounds device:MTLCreateSystemDefaultDevice()];self.view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;self.view.preferredFramesPerSecond=120;self.view.clearColor=MTLClearColorMake(0,0,0,1);
@@ -219,8 +223,53 @@ static unsigned short scan[128] = {
  if(mode==2){self.view.relativeAllowed=YES;self.view.guestCursor=NO;[self.view setHostCursorHidden:NO];}
  [self updateSubtitle];
 }
-- (void)toggleCursor:(id)sender{NSUserDefaults *d=[NSUserDefaults standardUserDefaults];[d setInteger:([self pointerMode]+1)%3 forKey:@"PointerMode"];[self applyPointerMode];[self sendGeometry];}
-- (BOOL)validateMenuItem:(NSMenuItem *)item{if(item.action==@selector(toggleCursor:))item.title=@[@"Switch to Mac Cursor",@"Switch to Captured Mouse",@"Switch to Android Cursor"][[self pointerMode]];return YES;}
+- (void)toggleCursor:(id)sender{NSUserDefaults *d=[NSUserDefaults standardUserDefaults];[d setInteger:([self pointerMode]+1)%3 forKey:@"PointerMode"];[self applyPointerMode];[self sendGeometry];[self syncSettingsWindow];}
+- (void)choosePointerMode:(NSMenuItem *)sender{[[NSUserDefaults standardUserDefaults] setInteger:sender.tag forKey:@"PointerMode"];[self applyPointerMode];[self sendGeometry];[self syncSettingsWindow];}
+- (BOOL)validateMenuItem:(NSMenuItem *)item{if(item.action==@selector(choosePointerMode:))item.state=item.tag==[self pointerMode]?NSControlStateValueOn:NSControlStateValueOff;return YES;}
+
+// Settings window. Pointer mode applies immediately; the rest are read by the launcher the
+// next time the VM starts (they are QEMU options), which the window says.
+- (NSPopUpButton *)popup:(NSString *)key titles:(NSArray<NSString *> *)titles values:(NSArray *)values {
+ NSPopUpButton *b=[NSPopUpButton new];b.identifier=key;b.target=self;b.action=@selector(settingChanged:);
+ id current=[[NSUserDefaults standardUserDefaults] objectForKey:key];
+ for(NSUInteger i=0;i<titles.count;i++){[b addItemWithTitle:titles[i]];b.lastItem.representedObject=values[i];if([values[i] isEqual:current])[b selectItemAtIndex:i];}
+ return b;
+}
+- (NSButton *)checkbox:(NSString *)key title:(NSString *)title {
+ NSButton *b=[NSButton checkboxWithTitle:title target:self action:@selector(checkChanged:)];b.identifier=key;
+ b.state=[[NSUserDefaults standardUserDefaults] boolForKey:key]?NSControlStateValueOn:NSControlStateValueOff;return b;
+}
+- (void)settingChanged:(NSPopUpButton *)sender {
+ [[NSUserDefaults standardUserDefaults] setObject:sender.selectedItem.representedObject forKey:sender.identifier];
+ if([sender.identifier isEqualToString:@"PointerMode"]){[self applyPointerMode];[self sendGeometry];}
+}
+- (void)checkChanged:(NSButton *)sender {[[NSUserDefaults standardUserDefaults] setBool:sender.state==NSControlStateValueOn forKey:sender.identifier];}
+- (void)syncSettingsWindow {[self.pointerPopup selectItemAtIndex:[self pointerMode]];}
+- (void)showSettings:(id)sender {
+ if(!self.settingsWindow){
+  NSTextField *(^label)(NSString *)=^NSTextField *(NSString *t){NSTextField *l=[NSTextField labelWithString:t];l.alignment=NSTextAlignmentRight;return l;};
+  self.pointerPopup=[self popup:@"PointerMode" titles:@[@"Android cursor",@"Mac cursor",@"Captured mouse"] values:@[@0,@1,@2]];
+  NSTextField *hint=[NSTextField labelWithString:@"⌃⌘M cycles pointer modes. Captured mouse: click to grab, Esc to release."];hint.textColor=NSColor.secondaryLabelColor;hint.font=[NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+  NSTextField *note=[NSTextField wrappingLabelWithString:@"Everything below applies the next time you start the VM."];note.textColor=NSColor.secondaryLabelColor;note.font=[NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+  NSGridView *grid=[NSGridView gridViewWithViews:@[
+   @[label(@"Pointer:"),self.pointerPopup],
+   @[[NSGridCell emptyContentView],hint],
+   @[[NSGridCell emptyContentView],note],
+   @[label(@"Resolution:"),[self popup:@"Resolution" titles:@[@"Match this Mac's display",@"1920 × 1200",@"2560 × 1600",@"3024 × 1890",@"3456 × 2160"] values:@[@"native",@"1920x1200",@"2560x1600",@"3024x1890",@"3456x2160"]]],
+   @[[NSGridCell emptyContentView],[self checkbox:@"StartFullscreen" title:@"Start in full screen"]],
+   @[label(@"Memory:"),[self popup:@"MemoryMiB" titles:@[@"4 GB",@"6 GB",@"8 GB"] values:@[@4096,@6144,@8192]]],
+   @[label(@"Processor cores:"),[self popup:@"CPUs" titles:@[@"4",@"6",@"8"] values:@[@4,@6,@8]]],
+   @[[NSGridCell emptyContentView],[self checkbox:@"Networking" title:@"Networking (also needed for the pointer and clipboard link)"]],
+   @[[NSGridCell emptyContentView],[self checkbox:@"Audio" title:@"Audio output"]]]];
+  grid.rowSpacing=8;grid.columnSpacing=10;grid.translatesAutoresizingMaskIntoConstraints=NO;
+  [grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+  NSWindow *w=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,520,330) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+  w.title=@"Googlebook Settings";w.releasedWhenClosed=NO;[w.contentView addSubview:grid];
+  [NSLayoutConstraint activateConstraints:@[[grid.topAnchor constraintEqualToAnchor:w.contentView.topAnchor constant:20],[grid.leadingAnchor constraintEqualToAnchor:w.contentView.leadingAnchor constant:20],[grid.trailingAnchor constraintLessThanOrEqualToAnchor:w.contentView.trailingAnchor constant:-20],[grid.bottomAnchor constraintLessThanOrEqualToAnchor:w.contentView.bottomAnchor constant:-20]]];
+  [w center];self.settingsWindow=w;
+ }
+ [self syncSettingsWindow];[self.view releaseCapture];[self.settingsWindow makeKeyAndOrderFront:nil];
+}
 - (void)pushClipboard {
  if(self.ctlFd<0)return;NSPasteboard *pb=[NSPasteboard generalPasteboard];
  if(pb.changeCount==self.sentClipCount)return;self.sentClipCount=pb.changeCount;
@@ -269,7 +318,8 @@ static unsigned short scan[128] = {
  NSBeep(); // no helper link yet, so there is nowhere to paste to
 }
 - (void)windowDidResignKey:(NSNotification *)n{[self.view releaseCapture];}
-- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender{return YES;}
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender{return NO;}
+- (void)windowWillClose:(NSNotification *)n{if(n.object==self.window)[NSApp terminate:nil];}
 - (void)applicationWillTerminate:(NSNotification *)n{[self.view releaseCapture];[self.connection disconnect];}
 - (void)spiceConnected:(CSConnection *)c{fprintf(stderr,"SPICE connected\n");}
 - (void)spiceDisconnected:(CSConnection *)c{dispatch_async(dispatch_get_main_queue(),^{[self.view releaseCapture];self.window.subtitle=@"VM disconnected";});}
@@ -287,6 +337,22 @@ static unsigned short scan[128] = {
 int main(int argc,char **argv){@autoreleasepool {
  if(argc<2||argc>3){fprintf(stderr,"Usage: GooglebookNative /absolute/path/to/spice.sock\n");return 2;}
  NSApplication *app=[NSApplication sharedApplication];[app setActivationPolicy:NSApplicationActivationPolicyRegular];
- NSMenu *menu=[NSMenu new];NSMenuItem *root=[NSMenuItem new];[menu addItem:root];NSMenu *sub=[NSMenu new];[sub addItemWithTitle:@"Paste into Guest" action:@selector(pasteIntoGuest:) keyEquivalent:@"v"];NSMenuItem *fs=[sub addItemWithTitle:@"Toggle Full Screen" action:@selector(toggleFull:) keyEquivalent:@"f"];fs.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;NSMenuItem *mc=[sub addItemWithTitle:@"Use Mac Cursor" action:@selector(toggleCursor:) keyEquivalent:@"m"];mc.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;NSMenuItem *rs=[sub addItemWithTitle:@"Re-sync Pointer" action:@selector(resyncPointer:) keyEquivalent:@"r"];rs.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;[sub addItemWithTitle:@"Quit Viewer" action:@selector(terminate:) keyEquivalent:@"q"];root.submenu=sub;app.mainMenu=menu;
+ // Menu bar. Actions have no target, so they reach the app delegate through the responder chain.
+ NSMenu *bar=[NSMenu new];
+ NSMenu *(^add)(NSString *)=^NSMenu *(NSString *title){NSMenuItem *it=[bar addItemWithTitle:title action:nil keyEquivalent:@""];NSMenu *m=[[NSMenu alloc] initWithTitle:title];it.submenu=m;return m;};
+ NSMenu *appMenu=add(@"Googlebook");
+ [appMenu addItemWithTitle:@"Settings…" action:@selector(showSettings:) keyEquivalent:@","];
+ [appMenu addItem:[NSMenuItem separatorItem]];
+ [appMenu addItemWithTitle:@"Shut Down and Quit" action:@selector(terminate:) keyEquivalent:@"q"];
+ NSMenu *editMenu=add(@"Edit");
+ [editMenu addItemWithTitle:@"Paste into Guest" action:@selector(pasteIntoGuest:) keyEquivalent:@"v"];
+ NSMenu *viewMenu=add(@"View");
+ NSMenuItem *fs=[viewMenu addItemWithTitle:@"Toggle Full Screen" action:@selector(toggleFull:) keyEquivalent:@"f"];fs.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
+ NSMenu *pointerMenu=add(@"Pointer");
+ NSArray *modes=@[@"Android Cursor",@"Mac Cursor",@"Captured Mouse"];
+ for(NSInteger m=0;m<3;m++){NSMenuItem *it=[pointerMenu addItemWithTitle:modes[m] action:@selector(choosePointerMode:) keyEquivalent:@""];it.tag=m;}
+ [pointerMenu addItem:[NSMenuItem separatorItem]];
+ NSMenuItem *next=[pointerMenu addItemWithTitle:@"Next Pointer Mode" action:@selector(toggleCursor:) keyEquivalent:@"m"];next.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
+ app.mainMenu=bar;
  App *delegate=[App new];delegate.socketPath=[NSString stringWithUTF8String:argv[1]];delegate.startFullscreen=argc==3&&!strcmp(argv[2],"--fullscreen");app.delegate=delegate;[app run];return 0;
 }}
