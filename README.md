@@ -43,7 +43,8 @@ We've only run this on one machine (M5, 16 GB, macOS 27). It *should* work on ot
 | Shortcut | What it does |
 |---|---|
 | `⌃⌘F` | Full screen |
-| `⌃⌘M` | Cycle pointer modes: Android cursor → Mac cursor → captured mouse |
+| `⌃⌘M` | Cycle pointer modes |
+| `Esc` | Release a captured mouse |
 | `⌘V` | Paste the Mac clipboard into the guest |
 | `⌘,` | Settings |
 
@@ -57,13 +58,14 @@ If you'd rather drive it from a terminal, `python3 run/launch.py work` does the 
 
 ### Pointer modes
 
-There are three, because none of them is perfect:
+**Captured mouse** is the default: click the window to grab the mouse, `Esc` to let go. It's the classic VM experience — a plain USB mouse as far as Android is concerned, so it behaves.
 
-- **Android cursor** (the default). The guest draws the pointer, so it changes shape properly — I-beams, resize arrows. It trails your hand a little, since the guest display tops out around 60 fps. Android sees it as a stylus, which is occasionally weird.
+There are two integrated modes where the pointer moves in and out of the window freely. They're labelled **experimental** because they're still kind of buggy:
+
+- **Android cursor.** The guest draws the pointer, so it changes shape properly (I-beams, resize arrows). It trails your hand a little, and Android sees it as a stylus, which gets weird in places.
 - **Mac cursor.** Instant, but it's always an arrow.
-- **Captured mouse.** The classic VM experience: click the window to grab the mouse, `Esc` to let go. It's a plain USB mouse as far as Android is concerned, so nothing is weird — you just can't move in and out freely.
 
-Your choice is remembered. Clipboard sync works in all three.
+Switch in the **Pointer** menu, in Settings, or with `⌃⌘M`. Your choice is remembered, and clipboard sync works in all three.
 
 ## What you're actually running
 

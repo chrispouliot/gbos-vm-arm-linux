@@ -161,7 +161,7 @@ static unsigned short scan[128] = {
 @end
 @implementation App
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
- [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"PointerMode":@0,@"Resolution":@"native",@"StartFullscreen":@NO,@"MemoryMiB":@4096,@"CPUs":@6,@"Networking":@YES,@"Audio":@YES}];
+ [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"PointerMode":@2,@"Resolution":@"native",@"StartFullscreen":@NO,@"MemoryMiB":@4096,@"CPUs":@6,@"Networking":@YES,@"Audio":@YES}];
  self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1280,800) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
  self.window.title=@"Googlebook VM";self.window.subtitle=@"Connecting…";self.window.delegate=self;self.window.acceptsMouseMovedEvents=YES;self.window.collectionBehavior=NSWindowCollectionBehaviorFullScreenPrimary;
  self.view=[[VMView alloc] initWithFrame:self.window.contentView.bounds device:MTLCreateSystemDefaultDevice()];self.view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;self.view.preferredFramesPerSecond=120;self.view.clearColor=MTLClearColorMake(0,0,0,1);
@@ -284,6 +284,7 @@ static unsigned short scan[128] = {
  else self.window.subtitle=self.view.relativeAllowed?@"Click to capture • Esc releases":@"Waiting for Android to link the pointer…";
 }
 // Pointer modes, cycled with Ctrl+Cmd+M and remembered:
+//   (2, the captured mouse, is the default; 0 and 1 are labelled experimental in the UI.)
 //   0 Android cursor: the helper's tablet device; Android draws the pointer (guest refresh rate).
 //   1 Mac cursor:     the helper injects events; the Mac pointer is the cursor (always an arrow).
 //   2 Captured mouse: the classic emulated USB mouse; click to capture, Esc releases.
@@ -318,12 +319,12 @@ static unsigned short scan[128] = {
  if([sender.identifier isEqualToString:@"PointerMode"]){[self applyPointerMode];[self sendGeometry];}
 }
 - (void)checkChanged:(NSButton *)sender {[[NSUserDefaults standardUserDefaults] setBool:sender.state==NSControlStateValueOn forKey:sender.identifier];}
-- (void)syncSettingsWindow {[self.pointerPopup selectItemAtIndex:[self pointerMode]];}
+- (void)syncSettingsWindow {[self.pointerPopup selectItemAtIndex:([self pointerMode]+1)%3];}
 - (void)showSettings:(id)sender {
  if(!self.settingsWindow){
   NSTextField *(^label)(NSString *)=^NSTextField *(NSString *t){NSTextField *l=[NSTextField labelWithString:t];l.alignment=NSTextAlignmentRight;return l;};
-  self.pointerPopup=[self popup:@"PointerMode" titles:@[@"Android cursor",@"Mac cursor",@"Captured mouse"] values:@[@0,@1,@2]];
-  NSTextField *hint=[NSTextField labelWithString:@"⌃⌘M cycles pointer modes. Captured mouse: click to grab, Esc to release."];hint.textColor=NSColor.secondaryLabelColor;hint.font=[NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+  self.pointerPopup=[self popup:@"PointerMode" titles:@[@"Captured mouse",@"Android cursor (experimental)",@"Mac cursor (experimental)"] values:@[@2,@0,@1]];
+  NSTextField *hint=[NSTextField labelWithString:@"Captured mouse: click to grab, Esc to release. ⌃⌘M cycles modes."];hint.textColor=NSColor.secondaryLabelColor;hint.font=[NSFont systemFontOfSize:NSFont.smallSystemFontSize];
   NSTextField *note=[NSTextField wrappingLabelWithString:@"Everything below applies the next time you start the VM."];note.textColor=NSColor.secondaryLabelColor;note.font=[NSFont systemFontOfSize:NSFont.smallSystemFontSize];
   NSGridView *grid=[NSGridView gridViewWithViews:@[
    @[label(@"Pointer:"),self.pointerPopup],
@@ -423,8 +424,9 @@ int main(int argc,char **argv){@autoreleasepool {
  NSMenu *viewMenu=add(@"View");
  NSMenuItem *fs=[viewMenu addItemWithTitle:@"Toggle Full Screen" action:@selector(toggleFull:) keyEquivalent:@"f"];fs.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
  NSMenu *pointerMenu=add(@"Pointer");
- NSArray *modes=@[@"Android Cursor",@"Mac Cursor",@"Captured Mouse"];
- for(NSInteger m=0;m<3;m++){NSMenuItem *it=[pointerMenu addItemWithTitle:modes[m] action:@selector(choosePointerMode:) keyEquivalent:@""];it.tag=m;}
+ // Captured mouse is the default; the two integrated modes still have rough edges.
+ NSArray *modes=@[@"Android Cursor (Experimental)",@"Mac Cursor (Experimental)",@"Captured Mouse"];
+ for(NSNumber *n in @[@2,@0,@1]){NSMenuItem *it=[pointerMenu addItemWithTitle:modes[n.integerValue] action:@selector(choosePointerMode:) keyEquivalent:@""];it.tag=n.integerValue;}
  [pointerMenu addItem:[NSMenuItem separatorItem]];
  NSMenuItem *next=[pointerMenu addItemWithTitle:@"Next Pointer Mode" action:@selector(toggleCursor:) keyEquivalent:@"m"];next.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
  app.mainMenu=bar;
