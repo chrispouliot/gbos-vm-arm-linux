@@ -1,0 +1,162 @@
+diff --git a/Sources/CocoaSpice/CSDisplay.m b/Sources/CocoaSpice/CSDisplay.m
+index 95fca04..31f9b29 100644
+--- a/Sources/CocoaSpice/CSDisplay.m
++++ b/Sources/CocoaSpice/CSDisplay.m
+@@ -28,6 +28,40 @@
+ #import <IOSurface/IOSurfaceRef.h>
+ #import <mach/vm_page_size.h>
+ 
++// Opt-in, bounded diagnostic: compare the server scanout with the private
++// presentation texture before acknowledging the server's ownership handshake.
++static void vm_dump_scanout(id<MTLBuffer> source, id<MTLBuffer> shadow,
++                            NSUInteger width, NSUInteger height, NSUInteger stride,
++                            BOOL bgra, CGRect rect, unsigned sample) {
++    const char *directory = getenv("VM_NATIVE_DIAGNOSTIC_DIR");
++    if (!directory || !source || !shadow) return;
++    const unsigned char *a=source.contents, *b=shadow.contents;
++    NSUInteger different=0, outside=0;
++    for (NSUInteger y=0;y<height;y++) for (NSUInteger x=0;x<width;x++) {
++        NSUInteger off=y*stride+x*4;
++        if (memcmp(a+off,b+off,3)) {
++            different++;
++            if (!CGRectContainsPoint(rect,CGPointMake(x,y))) outside++;
++        }
++    }
++    fprintf(stderr,"SCANOUT_COMPARE sample=%u pixels=%lu different=%lu outside_damage=%lu rect=%.0f,%.0f,%.0f,%.0f\n",sample,width*height,different,outside,rect.origin.x,rect.origin.y,rect.size.width,rect.size.height);
++    for (unsigned which=0;which<2;which++) {
++        NSString *path=[NSString stringWithFormat:@"%s/%02u-%s.ppm",directory,sample,which?"shadow":"source"];
++        FILE *file=fopen(path.fileSystemRepresentation,"wb"); if(!file) continue;
++        fprintf(file,"P6\n%lu %lu\n255\n",width,height);
++        const unsigned char *pixels=which?b:a;
++        unsigned char *row=malloc(width*3);
++        for(NSUInteger y=0;y<height;y++) {
++            for(NSUInteger x=0;x<width;x++) {
++                const unsigned char *p=pixels+y*stride+x*4;
++                row[x*3]=p[bgra?2:0];row[x*3+1]=p[1];row[x*3+2]=p[bgra?0:2];
++            }
++            fwrite(row,3,width,file);
++        }
++        free(row);fclose(file);
++    }
++}
++
+ @interface CSDisplay ()
+ 
+ @property (nonatomic, assign) BOOL ready;
+@@ -226,6 +260,14 @@ static void cs_gl_draw(SpiceDisplayChannel *channel,
+     SPICE_DEBUG("[CocoaSpice] %s",  __FUNCTION__);
+ 
+     g_assert(self.isGLEnabled);
++    static double statsStart; static unsigned statsFrames;
++    double statsNow = CFAbsoluteTimeGetCurrent();
++    if (!statsStart) statsStart = statsNow;
++    ++statsFrames;
++    if (statsNow-statsStart >= 5) {
++        fprintf(stderr, "NATIVE_GL_SCANOUT %.1f fps %gx%g IOSurface/Metal\n", statsFrames/(statsNow-statsStart), self.displaySize.width, self.displaySize.height);
++        statsStart=statsNow;statsFrames=0;
++    }
+     [self copyScanoutRect:CGRectMake(x, y, w, h) withCompletion:^{
+         // `copyScanoutRect:withCompletion:` runs us on the SPICE context thread,
+         // which is both where SPICE calls have to be made and where the
+@@ -513,6 +555,7 @@ - (void)rebuildScanoutTextureWithSurface:(IOSurfaceRef)surface width:(NSUInteger
+     // the damage rects that follow describe changes against the previous
+     // scanout, so the first copy out of a new one has to be whole
+     self.shadowNeedsFullCopy = YES;
++    cs_update_monitor_area(self.channel, NULL, (__bridge void *)self);
+ }
+ 
+ /// Allocate the private texture the scanout is copied into. See
+@@ -591,7 +634,8 @@ - (void)copyScanoutRect:(CGRect)rect withCompletion:(nonnull completionCallback_
+ 
+     CGRect bounds = CGRectMake(0, 0, MIN(source.width, destination.width),
+                                MIN(source.height, destination.height));
+-    CGRect damaged = self.shadowNeedsFullCopy ? bounds : CGRectIntersection(rect, bounds);
++    BOOL forceFull = getenv("VM_NATIVE_FULL_COPY") && strcmp(getenv("VM_NATIVE_FULL_COPY"),"1")==0;
++    CGRect damaged = (self.shadowNeedsFullCopy || forceFull) ? bounds : CGRectIntersection(rect, bounds);
+ 
+     commandBuffer.label = @"Scanout Copy";
+     if (!CGRectIsEmpty(damaged)) {
+@@ -605,12 +649,29 @@ - (void)copyScanoutRect:(CGRect)rect withCompletion:(nonnull completionCallback_
+                     destinationLevel:0
+                    destinationOrigin:MTLOriginMake(damaged.origin.x, damaged.origin.y, 0)];
+     }
++    static double lastSample; static unsigned samples;
++    id<MTLBuffer> sampleSource=nil, sampleShadow=nil;
++    NSUInteger sampleStride=(source.width*4+255)&~255UL;
++    unsigned sampleNumber=0;
++    const char *diagnosticDir=getenv("VM_NATIVE_DIAGNOSTIC_DIR");
++    NSString *trigger=diagnosticDir?[NSString stringWithFormat:@"%s/capture-now",diagnosticDir]:nil;
++    BOOL manualSample=trigger && samples<32 && CFAbsoluteTimeGetCurrent()-lastSample>10 && access(trigger.fileSystemRepresentation,F_OK)==0;
++    if(diagnosticDir && (samples<8 || manualSample) && CFAbsoluteTimeGetCurrent()-lastSample>10) {
++        if(manualSample) unlink(trigger.fileSystemRepresentation);
++        lastSample=CFAbsoluteTimeGetCurrent();sampleNumber=++samples;
++        sampleSource=[self.device newBufferWithLength:sampleStride*source.height options:MTLResourceStorageModeShared];
++        sampleShadow=[self.device newBufferWithLength:sampleStride*source.height options:MTLResourceStorageModeShared];
++        if(sampleSource && sampleShadow) {
++            for(unsigned i=0;i<2;i++) [blitEncoder copyFromTexture:i?destination:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(source.width,source.height,1) toBuffer:i?sampleShadow:sampleSource destinationOffset:0 destinationBytesPerRow:sampleStride destinationBytesPerImage:sampleStride*source.height];
++        }
++    }
+     [blitEncoder endEncoding];
+     // later copies build on this one, and the queue keeps them in order
+     self.shadowNeedsFullCopy = NO;
+ 
+     [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> commandBuffer) {
+         BOOL succeeded = commandBuffer.error == nil;
++        if(succeeded && sampleNumber) vm_dump_scanout(sampleSource,sampleShadow,source.width,source.height,sampleStride,source.pixelFormat==MTLPixelFormatBGRA8Unorm,damaged,sampleNumber);
+         [CSMain.sharedInstance asyncWith:^{
+             // A failed copy leaves the shadow undefined, and a copy that was
+             // still in flight when the scanout changed wrote into a shadow we
+diff --git a/Sources/CocoaSpice/CSMain.m b/Sources/CocoaSpice/CSMain.m
+index bbee095..cd4f56c 100644
+--- a/Sources/CocoaSpice/CSMain.m
++++ b/Sources/CocoaSpice/CSMain.m
+@@ -91,7 +91,7 @@ static void logHandler(const gchar *log_domain, GLogLevelFlags log_level,
+     CSMain *self = (__bridge_transfer CSMain *)args;
+     
+     pthread_setname_np("SPICE Main Loop");
+-    gst_ios_init();
++    // Direct IOSurface display only: audio/video codec plugins are not initialized.
+     
+     g_main_context_ref(self->_main_context);
+     g_main_context_push_thread_default(self->_main_context);
+diff --git a/Sources/CocoaSpice/CSSession.m b/Sources/CocoaSpice/CSSession.m
+index 92707b1..053d5c5 100644
+--- a/Sources/CocoaSpice/CSSession.m
++++ b/Sources/CocoaSpice/CSSession.m
+@@ -297,7 +297,7 @@ - (id)init {
+                                                  selector:@selector(pasteboardDidRemove:)
+                                                      name:kCSPasteboardRemovedNotification
+                                                    object:nil];
+-        self.shareClipboard = YES;
++        self.shareClipboard = NO;
+     }
+     return self;
+ }
+@@ -311,8 +311,8 @@ - (id)initWithSession:(nonnull SpiceSession *)session {
+         self.session = g_object_ref(session);
+         
+         // g_get_user_special_dir(G_USER_DIRECTORY_PUBLIC_SHARE) returns NULL so we replace it with a valid value here
+-        [self createDefaultShareReadme];
+-        [self setSharedDirectory:self.defaultPublicShare.path readOnly:NO];
++        // Workspace viewer: do not create a host sharing directory.
++        // Host directory sharing disabled.
+         
+         SPICE_DEBUG("[CocoaSpice] %s:%d", __FUNCTION__, __LINE__);
+         g_signal_connect(session, "channel-new",
+diff --git a/Sources/CocoaSpiceRenderer/CSMetalRenderer.m b/Sources/CocoaSpiceRenderer/CSMetalRenderer.m
+index 9c7bad9..713a095 100644
+--- a/Sources/CocoaSpiceRenderer/CSMetalRenderer.m
++++ b/Sources/CocoaSpiceRenderer/CSMetalRenderer.m
+@@ -134,9 +134,9 @@ - (nonnull instancetype)initWithMetalKitView:(nonnull MTKView *)mtkView
+         
+         // Load all the shader files with a .metal file extension in the project
+         // FIXME: on Swift we have `Bundle.module` generated by SPM but it doesn't appear to be the case for Obj-C
+-        NSURL *modulePath = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"CocoaSpice_CocoaSpiceRenderer.bundle"];
+-        NSBundle *bundle = [NSBundle bundleWithURL:modulePath];
+-        id<MTLLibrary> defaultLibrary = [_device newDefaultLibraryWithBundle:bundle error:&error];
++        NSString *sourcePath = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"VMShaders.metal"];
++        NSString *source = [NSString stringWithContentsOfFile:sourcePath encoding:NSUTF8StringEncoding error:&error];
++        id<MTLLibrary> defaultLibrary = [_device newLibraryWithSource:source options:nil error:&error];
+         NSAssert(defaultLibrary, @"Failed to get library from bundle: %@", error);
+ 
+         // Load the vertex function from the library

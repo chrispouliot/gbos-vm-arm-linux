@@ -1,0 +1,6 @@
+work/
+fresh-test/
+download-cache/
+*.log
+__pycache__/
+.DS_Store
