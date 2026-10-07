@@ -12,6 +12,13 @@ EPOXY_REPO="https://github.com/utmapp/libepoxy.git"
 EPOXY_COMMIT="bf98587477fe68d07b93319ece7b40a7d0e2eabe"
 # Parallel build jobs. Kept low on purpose: an uncapped Mesa build needs far more RAM.
 JOBS="${GBOS_JOBS:-4}"
+# Rebuilding replaces signed binaries and the disk image. Doing that under a running VM gets
+# its processes killed by macOS ("Code Signature Invalid") or pulls the disk out from under it.
+no_running_vm() {
+  if /bin/ps -axo args= | grep -F "$WORK/host/qemu-interop" | grep -qv grep; then
+    die "a VM from $WORK is running. Quit it first; rebuilding under it would crash it."
+  fi
+}
 say() { printf '\n== %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1 ($2)"; }

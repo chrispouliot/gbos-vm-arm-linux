@@ -3,6 +3,7 @@
 # a copy of UTM's QEMU library that loads it, and the small QEMU launcher.
 # Output: $WORK/host/{qemu-interop,qemu-aarch64-softmmu,libvirglrenderer.1.dylib,virgl_render_server}
 . "$(dirname "$0")/lib.sh"
+no_running_vm
 need git "Xcode command line tools"; need clang "Xcode command line tools"
 need python3 "Homebrew or Xcode"; need pkg-config "brew install pkg-config"
 FW="$UTM_BETA_APP/Contents/Frameworks"
