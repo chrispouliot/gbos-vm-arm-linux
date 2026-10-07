@@ -150,6 +150,7 @@ static unsigned short scan[128] = {
 @property(nonatomic,strong) NSTask *vmTask;
 @property(nonatomic,strong) NSString *runDir;
 @property(nonatomic) BOOL quitting;
+@property(nonatomic) BOOL restarting;
 @property(nonatomic) BOOL densitySent;
 @property(nonatomic) NSInteger guestDensity;
 @property(nonatomic,strong) NSPopUpButton *pointerPopup;
@@ -236,7 +237,12 @@ static unsigned short scan[128] = {
  __weak App *weak=self;
  t.terminationHandler=^(NSTask *x){dispatch_async(dispatch_get_main_queue(),^{
   App *me=weak;if(!me||me.vmTask!=x)return;me.vmTask=nil;
-  if(me.quitting)[NSApp replyToApplicationShouldTerminate:YES];
+  if(me.quitting){
+   // Restart: once Android is down and the runner has exited, open a fresh copy of the app.
+   // A new instance also picks up any Settings that only apply at start.
+   if(me.restarting){NSTask *o=[NSTask new];o.executableURL=[NSURL fileURLWithPath:@"/bin/sh"];o.arguments=@[@"-c",@"sleep 1; exec /usr/bin/open -n \"$0\"",NSBundle.mainBundle.bundlePath];[o launchAndReturnError:nil];}
+   [NSApp replyToApplicationShouldTerminate:YES];
+  }
   else if(me.connection)[NSApp terminate:nil];   // Android shut itself down
   else [me fail:@"The VM exited before its display came up. Another Googlebook VM may already be running; otherwise check the newest folder under logs/."];
  });};
@@ -263,9 +269,10 @@ static unsigned short scan[128] = {
   }
  }];
 }
+- (void)restartVM:(id)sender {if(self.vmTask){self.restarting=YES;[NSApp terminate:nil];}}
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
  if(!self.vmTask||!self.vmTask.running)return NSTerminateNow;
- self.quitting=YES;self.window.subtitle=@"Shutting Android down…";[self.view releaseCapture];[self.vmTask terminate];
+ self.quitting=YES;self.window.subtitle=self.restarting?@"Restarting: shutting Android down…":@"Shutting Android down…";[self.view releaseCapture];[self.vmTask terminate];
  return NSTerminateLater;
 }
 // Control link to the helper inside Android (scripts/guest_input): it connects
@@ -303,7 +310,7 @@ static unsigned short scan[128] = {
 }
 - (void)toggleCursor:(id)sender{NSUserDefaults *d=[NSUserDefaults standardUserDefaults];[d setInteger:([self pointerMode]+1)%3 forKey:@"PointerMode"];[self applyPointerMode];[self sendGeometry];[self syncSettingsWindow];}
 - (void)choosePointerMode:(NSMenuItem *)sender{[[NSUserDefaults standardUserDefaults] setInteger:sender.tag forKey:@"PointerMode"];[self applyPointerMode];[self sendGeometry];[self syncSettingsWindow];}
-- (BOOL)validateMenuItem:(NSMenuItem *)item{if(item.action==@selector(choosePointerMode:))item.state=item.tag==[self pointerMode]?NSControlStateValueOn:NSControlStateValueOff;return YES;}
+- (BOOL)validateMenuItem:(NSMenuItem *)item{if(item.action==@selector(restartVM:))return self.vmTask!=nil;if(item.action==@selector(choosePointerMode:))item.state=item.tag==[self pointerMode]?NSControlStateValueOn:NSControlStateValueOff;return YES;}
 
 // Settings window. Pointer mode applies immediately; the rest are read by the launcher the
 // next time the VM starts (they are QEMU options), which the window says.
@@ -333,6 +340,7 @@ static unsigned short scan[128] = {
    @[label(@"Pointer:"),self.pointerPopup],
    @[[NSGridCell emptyContentView],hint],
    @[[NSGridCell emptyContentView],note],
+   @[[NSGridCell emptyContentView],[NSButton buttonWithTitle:@"Restart VM Now" target:self action:@selector(restartVM:)]],
    @[label(@"Resolution:"),[self popup:@"Resolution" titles:@[@"Match this Mac's display",@"1920 × 1200",@"2560 × 1600",@"3024 × 1890",@"3456 × 2160"] values:@[@"native",@"1920x1200",@"2560x1600",@"3024x1890",@"3456x2160"]]],
    @[[NSGridCell emptyContentView],[self checkbox:@"StartFullscreen" title:@"Start in full screen"]],
    @[label(@"Memory:"),[self popup:@"MemoryMiB" titles:@[@"4 GB",@"6 GB",@"8 GB"] values:@[@4096,@6144,@8192]]],
@@ -341,7 +349,7 @@ static unsigned short scan[128] = {
    @[[NSGridCell emptyContentView],[self checkbox:@"Audio" title:@"Audio output"]]]];
   grid.rowSpacing=8;grid.columnSpacing=10;grid.translatesAutoresizingMaskIntoConstraints=NO;
   [grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-  NSWindow *w=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,520,330) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+  NSWindow *w=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,520,370) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
   w.title=@"Googlebook Settings";w.releasedWhenClosed=NO;[w.contentView addSubview:grid];
   [NSLayoutConstraint activateConstraints:@[[grid.topAnchor constraintEqualToAnchor:w.contentView.topAnchor constant:20],[grid.leadingAnchor constraintEqualToAnchor:w.contentView.leadingAnchor constant:20],[grid.trailingAnchor constraintLessThanOrEqualToAnchor:w.contentView.trailingAnchor constant:-20],[grid.bottomAnchor constraintLessThanOrEqualToAnchor:w.contentView.bottomAnchor constant:-20]]];
   [w center];self.settingsWindow=w;
@@ -421,6 +429,7 @@ int main(int argc,char **argv){@autoreleasepool {
  NSMenu *appMenu=add(@"Googlebook");
  [appMenu addItemWithTitle:@"Settings…" action:@selector(showSettings:) keyEquivalent:@","];
  [appMenu addItem:[NSMenuItem separatorItem]];
+ NSMenuItem *rs=[appMenu addItemWithTitle:@"Restart VM" action:@selector(restartVM:) keyEquivalent:@"r"];rs.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
  [appMenu addItemWithTitle:@"Shut Down and Quit" action:@selector(terminate:) keyEquivalent:@"q"];
  NSMenu *editMenu=add(@"Edit");
  [editMenu addItemWithTitle:@"Paste into Guest" action:@selector(pasteIntoGuest:) keyEquivalent:@"v"];
