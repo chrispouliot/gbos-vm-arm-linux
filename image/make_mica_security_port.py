@@ -142,6 +142,20 @@ if '--host-input' in sys.argv:
 on property:sys.boot_completed=1
     start vm-input
 ''','vendor_configs_file')
+if '--stress-test' in sys.argv:
+ # Test images only: drive theme switches and app launches after boot (see guest_stress_test.sh).
+ add('bin/vm-stress-test.sh',(R/'scripts/guest_stress_test.sh').read_bytes(),'vendor_shell_exec',0o755)
+ add('etc/init/vm-stress-test.rc',b'''service vm-stress-test /system/bin/sh /vendor/bin/vm-stress-test.sh
+    disabled
+    oneshot
+    user shell
+    group shell graphics log readproc input
+    seclabel u:r:shell:s0
+    console ttyAMA0
+
+on post-fs-data
+    start vm-stress-test
+''','vendor_configs_file')
 if '--chrome-diagnostic' in sys.argv:
  assert '--venus' in sys.argv
  add('bin/vm-chrome-diagnostic.sh',(R/'scripts/guest_chrome_diagnostic.sh').read_bytes(),'vendor_shell_exec',0o755)
