@@ -1,4 +1,5 @@
-/* Narrow offline guest rule justified by actual memfd_file AVCs.
+/* Add the three narrow rules graphics clients need to share memfd-backed buffers
+ * (each one matches a denial seen in the guest log).
  * Does not change permissive domains, policy capabilities, MLS or constraints.
  */
 #include <stdio.h>

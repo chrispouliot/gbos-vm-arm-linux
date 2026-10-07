@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Disposable-VM diagnostic: dump Vulkan capabilities, then start Chrome once
+# Diagnostic: dump Vulkan capabilities, then start Chrome once
 # after boot and print its GPU-process log lines to the serial console.
 sleep 50
 /vendor/bin/vm-vulkan-probe --caps 2>&1 | grep -E 'VM_CAPS|= -'

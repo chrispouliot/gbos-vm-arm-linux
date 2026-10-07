@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Give a disposable workspace clone a fresh 16 GiB userdata partition.
+"""Give a cloned image a fresh 16 GiB userdata partition.
 Preserves all original partition contents; moves only userdata's GPT mapping to
 new sparse space beyond the old image and relocates the backup GPT. Android
-formats/encrypts the fresh area normally. Never accepts the original image.
+formats/encrypts the fresh area normally. Refuses to run on the original download.
 """
 import hashlib,json,struct,sys,zlib
 from pathlib import Path

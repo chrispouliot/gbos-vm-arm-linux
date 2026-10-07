@@ -1,4 +1,4 @@
-"""Relocate vendor_a into unused super space in a disposable regular-file copy.
+"""Relocate vendor_a into unused space in the super partition of a cloned image.
 AOSP LpMetadata format; validates hashes, bounds and all original extent ranges.
 """
 from pathlib import Path

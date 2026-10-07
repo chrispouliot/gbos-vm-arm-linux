@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Original Mica ramdisks + original signed virtio transport + checked donor GPU."""
+"""Build the VM ramdisk: the original ramdisks, the original signed virtio-pci modules, and the Cuttlefish virtio GPU/input modules."""
 from pathlib import Path
 import hashlib,json,stat,subprocess
 from cpio_tools import write

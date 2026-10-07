@@ -1,4 +1,4 @@
-"""Construct an offline VirGL/Mesa + Cuttlefish minigbm guest vendor overlay."""
+"""Add the graphics stack to the vendor overlay: Mesa VirGL, the Cuttlefish minigbm allocator, and the generic DRM composer."""
 from pathlib import Path
 import os,subprocess
 R=Path(__file__).resolve().parents[1]
@@ -20,13 +20,13 @@ def apply(add,original):
  composer=R/'artifacts/graphics-port-review/cf-composer'
  n='android.hardware.composer.hwc3-service.drm'
  add('bin/hw/'+n,(composer/n).read_bytes(),'hal_graphics_composer_default_exec',0o755)
- # A capability-bearing service's linker did not use LD_LIBRARY_PATH: its
- # tombstone proved it loaded the stock reporter, whose C++ ABI differs.
- # Replace that compositor-specific dependency at the actual search path.
+ # The linker ignores LD_LIBRARY_PATH for a service with capabilities, so the composer
+ # loaded the stock reporter library, whose C++ ABI differs. Replace that one library
+ # where the linker actually looks.
  n='drm_hwcomposer_atom_reporter.so'
  add('lib64/'+n,(composer/n).read_bytes(),'same_process_hal_file')
  n='android.hardware.graphics.allocator-service.minigbm';add('bin/hw/'+n,(donor/n).read_bytes(),'hal_graphics_allocator_default_exec',0o755)
- add('etc/init/vendor.qti.hardware.display.allocator-service.rc',b'''# Disposable VM: AOSP minigbm replaces the physical Qualcomm allocator.
+ add('etc/init/vendor.qti.hardware.display.allocator-service.rc',b'''# AOSP minigbm replaces the Qualcomm allocator.
 service vendor.graphics.allocator /vendor/bin/hw/android.hardware.graphics.allocator-service.minigbm
     class hal animation
     user system
@@ -40,7 +40,7 @@ service vendor.graphics.allocator /vendor/bin/hw/android.hardware.graphics.alloc
  props={'ro.hardware.egl':'virgl','ro.hardware.vulkan':'none','ro.hwui.use_vulkan':'false','debug.renderengine.backend':'skiaglthreaded','debug.renderengine.vulkan':'false','debug.renderengine.graphite_desktop_optin':'false','debug.hwui.renderer':'skiagl','ro.gfx.angle.supported':'false','ro.vendor.hwcomposer.mode':'client','ro.surface_flinger.has_wide_color_display':'false','ro.surface_flinger.has_HDR_display':'false'}
  props['ro.vendor.hwc.drop_drm_master']='0'
  text=original('build.prop').decode();lines=[l for l in text.splitlines() if l.split('=',1)[0] not in props]
- lines += ['# Workspace-built Mesa VirGL and virtual buffer allocator.']+[k+'='+v for k,v in props.items()]
+ lines += ['# Mesa VirGL and the virtual buffer allocator.']+[k+'='+v for k,v in props.items()]
  add('build.prop',('\n'.join(lines)+'\n').encode(),'vendor_file',0o600)
  # Label only the emulated GPU's sysfs subtree using Google's existing GPU type.
  contexts=original('etc/selinux/vendor_file_contexts')+b'\n/dev/ttyAMA0 u:object_r:console_device:s0\n/sys/devices/platform/3f000000\\.pcie/pci0000:00/0000:00:01\\.0(/.*)? u:object_r:sysfs_gpu:s0\n'

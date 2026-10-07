@@ -1,4 +1,4 @@
-// Guest input helper for the disposable Googlebook VM, run with app_process as
+// Guest input helper for the Googlebook VM, run with app_process as
 // the shell user. It connects out to the viewer on the host (10.0.2.2 is the
 // host loopback under QEMU user networking) and, on its request, injects
 // absolute mouse events and syncs clipboard text. Same approach as scrcpy's

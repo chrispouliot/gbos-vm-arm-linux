@@ -1,6 +1,6 @@
 #!/system/bin/sh
-# Offline test provisioning on a new, disposable VM disk only.
-# No accounts, credentials, networking, device-owner or FRP state are changed.
+# First-boot provisioning: mark the device set up and go straight to the desktop.
+# Does not touch accounts, credentials, networking, device-owner or FRP state.
 echo "VM_BOOT_COMPLETED uptime=$(cut -d' ' -f1 /proc/uptime)"
 echo VM_OFFLINE_DESKTOP_BEGIN
 for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do

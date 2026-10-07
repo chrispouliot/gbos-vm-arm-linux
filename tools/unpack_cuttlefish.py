@@ -8,7 +8,7 @@ Output: a folder with the software KeyMint/Gatekeeper/audio/boot-control package
 Every file is read out of the image without mounting it. Needs dump.erofs (erofs-utils),
 debugfs (e2fsprogs) and lz4 on PATH or passed with --tools.
 
-  unpack_cuttlefish.py ZIP OUT [--tools DIR] [--compare EXISTING_ARTIFACTS_DIR]
+  unpack_cuttlefish.py ZIP OUT [--tools DIR]
 """
 import argparse, hashlib, io, json, shutil, struct, subprocess, sys, tempfile, zipfile
 from pathlib import Path
@@ -39,8 +39,6 @@ FILES = {
 }
 RAMDISK_MODULES = ['virtio_pci_legacy_dev.ko', 'virtio_pci_modern_dev.ko', 'virtio_pci.ko',
                    'virtio_dma_buf.ko', 'virtio-gpu.ko', 'virtio_input.ko', 'virtio_blk.ko']
-# Where the same files live in the original development workspace, for --compare.
-LEGACY = {'security/': 'security-port-review/', 'graphics/': 'graphics-port-review/', 'modules/': 'cuttlefish-arm17/modules/'}
 
 
 def sha256_file(path):
@@ -130,7 +128,6 @@ def main():
     a = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     a.add_argument('zip'); a.add_argument('out')
     a.add_argument('--tools', help='directory tree containing dump.erofs and debugfs')
-    a.add_argument('--compare', help='existing artifacts directory to compare against byte for byte')
     args = a.parse_args()
 
     def tool(name):
@@ -201,17 +198,6 @@ def main():
         manifest[target] = hashlib.sha256(data).hexdigest()
     (out / 'manifest.json').write_text(json.dumps({'source': URL, 'zip_sha256': ZIP_SHA256, 'files': manifest}, indent=1) + '\n')
     print(f'unpacked {len(results)} files into {out}')
-
-    if args.compare:
-        base, same, differ, absent = Path(args.compare), 0, [], []
-        for target, data in results.items():
-            legacy = next((base / (new and target.replace(old, new, 1)) for old, new in LEGACY.items() if target.startswith(old)), None)
-            if legacy is None or not legacy.exists(): absent.append(target); continue
-            if legacy.read_bytes() == data: same += 1
-            else: differ.append(target)
-        print(f'compare: {same} identical, {len(differ)} different, {len(absent)} with no existing counterpart')
-        for t in differ: print('  DIFFERENT', t)
-        if differ: sys.exit(1)
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ def apply(add):
  # The new official APEX owns this interface; remove the duplicate declaration.
  add('etc/vintf/manifest/bluetooth_audio.xml',b'<manifest version="1.0" type="device"/>\n','vendor_configs_file')
  # No Qualcomm hotword DSP exists in the VM. An advertised but absent AIDL
- # sound-trigger service makes system_server wait forever (watchdog evidence).
+ # sound-trigger service makes system_server wait forever (it trips the watchdog).
  add('etc/vintf/manifest/soundtrigger.qti.xml',b'<manifest version="1.0" type="device"/>\n','vendor_configs_file')
  names=['audio_effects.xml','audio_effects_config.xml','audio_policy_configuration.xml','audio_policy_volumes.xml','default_volume_tables.xml','bluetooth_with_le_audio_policy_configuration_7_0.xml','primary_audio_policy_configuration.xml','r_submix_audio_policy_configuration.xml','surround_sound_configuration_5_0.xml','usb_audio_policy_configuration.xml']
  for n in names:

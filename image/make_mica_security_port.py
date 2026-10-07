@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Authorized offline software KeyMint experiment; never edits original images.
+"""Rebuild the vendor partition for a VM: software KeyMint and the other virtual-device
+services replace hardware the VM does not have. Never edits the original image.
 Preserves all existing vendor files/metadata through EROFS incremental import.
 Only the modified vendor mount omits its obsolete stock AVB hash. Other mounts
 retain original AVB; encryption and global SELinux enforcement remain unchanged.
@@ -22,11 +23,11 @@ files={}
 def original(path):
  return subprocess.check_output([str(D/'dump.erofs'),f'--offset={off}','--path=/'+path,'--cat',str(raw)])
 def add(n,b,label,mode=0o644):files[n]=(b,label,mode)
-add('build.prop',original('build.prop')+b'\n# Disposable VM has no StrongBox hardware.\nro.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none\n','vendor_file',0o600)
+add('build.prop',original('build.prop')+b'\n# The VM has no StrongBox hardware.\nro.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none\n','vendor_file',0o600)
 n='etc/init/hw/init.qti.kernel.rc';b=original(n)
 old=b'on post-fs-data\n    # Late attach SOCCP and start ADSP and CDSP\n    wait_for_prop vendor.all.modules.ready 1\n    restart start-subsys'
 assert b.count(old)==1
-b=b.replace(old,b'# Physical Qualcomm coprocessors do not exist in this disposable VM.\non post-fs-data && property:ro.boot.vm.qti_subsystems=1\n    wait_for_prop vendor.all.modules.ready 1\n    restart start-subsys')
+b=b.replace(old,b'# The Qualcomm coprocessors do not exist in a VM.\non post-fs-data && property:ro.boot.vm.qti_subsystems=1\n    wait_for_prop vendor.all.modules.ready 1\n    restart start-subsys')
 add(n,b,'vendor_configs_file')
 n='etc/selinux/vendor_file_contexts'
 m=metadata(raw,'/'+n,off)
@@ -34,7 +35,7 @@ add(n,original(n)+b'\n/dev/ttyAMA0 u:object_r:console_device:s0\n',m['xattrs']['
 add('bin/hw/android.hardware.security.keymint-service',ext('/bin/hw/android.hardware.security.keymint-service.nonsecure'),'hal_keymint_default_exec',0o755)
 # Private crypto avoids replacing the original vendor library for other services.
 add('lib64/vm_keymint/libcrypto.so',ext('/lib64/libcrypto.so'),'vendor_file')
-add('etc/init/vm-software-keymint.rc',b'''# Disposable offline VM: AOSP software test KeyMint, not hardware-backed.
+add('etc/init/vm-software-keymint.rc',b'''# AOSP software KeyMint: not hardware-backed.
 service vendor.keymint-default /vendor/bin/hw/android.hardware.security.keymint-service
     class early_hal
     user nobody
@@ -52,7 +53,7 @@ on init
     start vm-diagnostic-log
 ''','vendor_configs_file')
 if '--quiet-diagnostics' in sys.argv:
- # Keep ANR/crash evidence without streaming every hardware-service warning
+ # Keep ANR and crash reports without streaming every hardware-service warning
  # through an emulated UART. This logger cost 46–59% of one guest CPU in an ANR.
  n='etc/init/vm-diagnostic-log.rc'
  b,label,mode=files[n]
@@ -104,7 +105,7 @@ if '--venus' in sys.argv:
 on post-fs-data
     start vm-vulkan-probe
 ''','vendor_configs_file')
- (O/'venus-experiment.json').write_text(json.dumps({'status':'unverified Vulkan experiment','driver_sha256':hashlib.sha256(driver.read_bytes()).hexdigest(),'driver':'Mesa 26.2.4 Android ARM64 Venus','desktop':'retains GLES','test':'enumerate Vulkan device, fill 4KiB buffer and verify readback','security_policy':'unchanged'})+'\n')
+ (O/'venus-experiment.json').write_text(json.dumps({'status':'Venus Vulkan driver installed','driver_sha256':hashlib.sha256(driver.read_bytes()).hexdigest(),'driver':'Mesa 26.2.4 Android ARM64 Venus','desktop':'retains GLES','test':'enumerate Vulkan device, fill 4KiB buffer and verify readback','security_policy':'unchanged'})+'\n')
 if '--quiet-absent-hardware' in sys.argv:
  # The VM has no TPM or Trusty; stop these services after their first failure
  # instead of letting init restart them (and dump a tombstone) every 5 seconds.
@@ -190,7 +191,7 @@ if '--audio' in sys.argv:
  apply(add)
  (O/'audio-port.json').write_text(json.dumps({'source':'official Cuttlefish build 16373615 audio APEX','deselected':'com.android.hardware.audio.desktop','host_audio':'none'})+'\n')
 if '--vm-compat' in sys.argv:
- # Keep boot-control semantics for the disposable A/B disk, without ChromeOS firmware calls.
+ # Keep A/B boot-control behaviour without the ChromeOS firmware calls.
  add('bin/hw/android.hardware.boot-service.android-desktop',(R/'artifacts/security-port-review/boot-service.default').read_bytes(),'hal_bootctl_default_exec',0o755)
  (O/'original-policy').write_bytes(original('etc/selinux/precompiled_sepolicy'))
  subprocess.run([str(TOOLS/'guest_graphics_memfd_policy' if TOOLS else R/'scripts/guest_graphics_memfd_policy'),str(O/'original-policy'),str(O/'graphics-policy')],check=True)
@@ -203,7 +204,7 @@ if '--locksettings' in sys.argv:
  (O/'locksettings-port.json').write_text(json.dumps({'gatekeeper':'official AOSP nonsecure build 16373615','weaver':'not advertised; AOSP optional-service fallback','security':'software-only VM-generated secrets; not hardware-backed'})+'\n')
 if '--offline-desktop' in sys.argv:
  # Equivalent provisioning flags to official AOSP Provision DefaultActivity,
- # applied only to new disposable userdata without accounts or personal data.
+ # applied to fresh userdata, before any account exists.
  add('etc/init/vm-offline-desktop.rc',b'''service vm-offline-desktop /system/bin/sh /vendor/bin/vm-offline-desktop.sh
     disabled
     oneshot
@@ -216,7 +217,7 @@ on property:sys.boot_completed=1
     start vm-offline-desktop
 ''','vendor_configs_file')
  add('bin/vm-offline-desktop.sh',(R/'scripts/guest_offline_desktop.sh').read_bytes(),'vendor_shell_exec',0o755)
- (O/'offline-desktop.json').write_text(json.dumps({'purpose':'offline desktop test on fresh disposable userdata','source':'AOSP Provision DefaultActivity provisioning flags','accounts':'none','consumer_onboarding':'not completed'})+'\n')
+ (O/'offline-desktop.json').write_text(json.dumps({'purpose':'skip first-run setup on fresh userdata','source':'AOSP Provision DefaultActivity provisioning flags','accounts':'none','consumer_onboarding':'not completed'})+'\n')
 if '--diagnostics' in sys.argv and '--quiet-diagnostics' not in sys.argv:
  add('etc/init/vm-state.rc',b'''# Read-only state snapshots over the isolated guest serial console.
 service vm-state /system/bin/sh /vendor/bin/vm-state.sh
@@ -301,5 +302,5 @@ entries=read((base/'vendor_0_platform.cpio').read_bytes());name='first_stage_ram
 mode,b=entries[name];s=b.decode();s='\n'.join(l.replace(',avb=vbmeta','') if l.startswith('vendor ') else l for l in s.splitlines())+'\n'
 ram+=write({name:(mode,s.encode())})
 (O/'initrd.img').write_bytes(subprocess.check_output(['lz4','-l','-c'],input=ram))
-(O/'manifest.json').write_text(json.dumps({'authorization':'User approved software security services in disposable VM','source':'official Android CI 16373615 software KeyMint','changed_mount':'vendor only; stock AVB removed only for modified vendor filesystem','selinux':('enforcing; three graphics-client memfd sharing rules added' if '--vm-compat' in sys.argv else 'enforcing, policy unchanged'),'encryption':'unchanged','files':{n:{'sha256':hashlib.sha256(b).hexdigest(),'label':label,'mode':oct(mode)} for n,(b,label,mode) in files.items()},'vendor_bytes':v.stat().st_size},indent=2)+'\n')
+(O/'manifest.json').write_text(json.dumps({'source':'official Android CI 16373615 software KeyMint','changed_mount':'vendor only; stock AVB removed only for modified vendor filesystem','selinux':('enforcing; three graphics-client memfd sharing rules added' if '--vm-compat' in sys.argv else 'enforcing, policy unchanged'),'encryption':'unchanged','files':{n:{'sha256':hashlib.sha256(b).hexdigest(),'label':label,'mode':oct(mode)} for n,(b,label,mode) in files.items()},'vendor_bytes':v.stat().st_size},indent=2)+'\n')
 print(O)

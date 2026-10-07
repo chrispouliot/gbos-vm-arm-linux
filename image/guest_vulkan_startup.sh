@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Bounded startup diagnostics for the disposable VM, even without boot_completed.
+# Startup diagnostics: runs the Vulkan self-test even if boot never completes.
 sleep 35
 echo VM_VULKAN_STARTUP_BEGIN
 getprop sys.boot_completed

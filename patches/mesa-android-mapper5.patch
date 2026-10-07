@@ -33,7 +33,7 @@
 --- /dev/null
 +++ b/src/util/u_gralloc/u_gralloc_vm_mapper5.cpp
 @@ -0,0 +1,64 @@
-+/* Workspace prototype: use the installed minigbm stable-C mapper metadata.
++/* VM-specific helper: use the installed minigbm stable-C mapper metadata.
 + * Decoder follows AOSP Gralloc4.cpp; supports bounded, single-fd color layouts.
 + * This is scoped to this VM's explicit mapper.minigbm module, not a generic
 + * Android mapper discovery implementation.

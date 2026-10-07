@@ -1,4 +1,4 @@
-"""Approved disposable VM: self-contained AOSP Gatekeeper, no absent Weaver."""
+"""Software Gatekeeper from AOSP, and no Weaver (the VM has no such hardware)."""
 from pathlib import Path
 R=Path(__file__).resolve().parents[1]
 def apply(add):
@@ -10,4 +10,4 @@ def apply(add):
  # AOSP/Cuttlefish support Gatekeeper without optional Weaver hardware.
  # Advertising an absent Weaver caused waitForDeclaredService to hang.
  add('etc/vintf/manifest/android.hardware.weaver-service.android-desktop.xml',b'<manifest version="9.0" type="device"/>\n','vendor_configs_file')
- add('etc/init/android.hardware.weaver-service.android-desktop.rc',b'# No physical Weaver in this offline disposable VM.\n','vendor_configs_file')
+ add('etc/init/android.hardware.weaver-service.android-desktop.rc',b'# No Weaver hardware in a VM.\n','vendor_configs_file')

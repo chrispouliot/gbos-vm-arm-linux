@@ -1,4 +1,5 @@
-/* Disposable Android VM Vulkan smoke test: enumerate, submit, read back 4 KiB. */
+/* Vulkan smoke test for the guest: enumerate, submit, read back 4 KiB; with --ahb-render,
+ * share one Android buffer between Vulkan and GLES and check every pixel. */
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include <vulkan/vulkan.h>
 #include <android/hardware_buffer.h>

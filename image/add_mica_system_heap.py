@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clone an existing disposable Mica variant and load the official CF heap driver."""
+"""Clone an image variant and add the Cuttlefish DMA-heap kernel module to its ramdisk."""
 from pathlib import Path
 import hashlib,json,shutil,stat,subprocess,sys
 from cpio_tools import read,write

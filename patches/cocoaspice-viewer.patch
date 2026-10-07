@@ -138,7 +138,7 @@ index 92707b1..053d5c5 100644
          // g_get_user_special_dir(G_USER_DIRECTORY_PUBLIC_SHARE) returns NULL so we replace it with a valid value here
 -        [self createDefaultShareReadme];
 -        [self setSharedDirectory:self.defaultPublicShare.path readOnly:NO];
-+        // Workspace viewer: do not create a host sharing directory.
++        // Googlebook viewer: do not create a host sharing directory.
 +        // Host directory sharing disabled.
          
          SPICE_DEBUG("[CocoaSpice] %s:%d", __FUNCTION__, __LINE__);

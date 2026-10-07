@@ -1,4 +1,4 @@
-"""Read inode metadata and short-name xattrs from these EROFS images; no writes."""
+"""Read inode metadata and short-name xattrs from an EROFS image; no writes."""
 import re,struct,subprocess
 from pathlib import Path
 D=Path(__file__).resolve().parents[1]/'experiments/erofs-utils/1.9.4/bin/dump.erofs'

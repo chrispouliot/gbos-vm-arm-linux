@@ -1,4 +1,4 @@
-"""Small newc reader/writer for in-memory VM ramdisk experiments."""
+"""Small newc cpio reader/writer for editing the VM ramdisk in memory."""
 import stat
 def read(data):
     pos=0;out={}

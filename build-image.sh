@@ -11,8 +11,8 @@ for f in "$WORK/googlebook/mica-recovery.raw" "$WORK/cuttlefish/manifest.json" "
 done
 [ -e "$WORK/image/googlebook.raw" ] && die "$WORK/image already has a disk; move it away first (it holds your data)"
 
-# The pipeline scripts expect one workspace root with fixed relative paths. Build that layout
-# from links, so the scripts stay as they were tested.
+# The image scripts expect one root folder with fixed relative paths (artifacts/, experiments/,
+# scripts/). Build that layout from links rather than rewriting every path in them.
 WS="$WORK/ws"; rm -rf "$WS"
 mkdir -p "$WS/scripts" "$WS/artifacts/mica" "$WS/artifacts/graphics-port-review" "$WS/artifacts/cuttlefish-arm17" \
          "$WS/experiments/erofs-utils/1.9.4" "$WS/experiments/ext4-tools/e2fsprogs/1.47.4"
