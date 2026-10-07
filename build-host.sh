@@ -61,8 +61,8 @@ say "QEMU library that loads the patched renderer"
 cp "$FW/qemu-aarch64-softmmu.framework/Versions/A/qemu-aarch64-softmmu" "$WORK/host/qemu-aarch64-softmmu"
 chmod u+w "$WORK/host/qemu-aarch64-softmmu"
 install_name_tool -change @rpath/virglrenderer.1.framework/Versions/A/virglrenderer.1 \
-  "$WORK/host/libvirglrenderer.1.dylib" "$WORK/host/qemu-aarch64-softmmu" 2>/dev/null
-otool -arch arm64 -L "$WORK/host/qemu-aarch64-softmmu" | grep -q "$WORK/host/libvirglrenderer.1.dylib" \
+  @loader_path/libvirglrenderer.1.dylib "$WORK/host/qemu-aarch64-softmmu" 2>/dev/null
+otool -arch arm64 -L "$WORK/host/qemu-aarch64-softmmu" | grep -q "@loader_path/libvirglrenderer.1.dylib" \
   || die "could not repoint QEMU at the patched renderer"
 codesign --force --sign - "$WORK/host/qemu-aarch64-softmmu" 2>/dev/null
 

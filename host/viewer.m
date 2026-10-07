@@ -214,6 +214,11 @@ static unsigned short scan[128] = {
  NSBundle *b=NSBundle.mainBundle;NSUserDefaults *d=[NSUserDefaults standardUserDefaults];
  const char *e=getenv("GOOGLEBOOK_WORK");NSString *work=e?@(e):[b objectForInfoDictionaryKey:@"GBOSWork"];
  NSString *runner=[b pathForResource:@"run_vm" ofType:@"py"];
+ // Prefer the folder this app sits in (WORK/host/Googlebook VM.app), so a work folder that was
+ // moved or copied to another Mac keeps working; fall back to the path recorded at build time
+ // for an app that was copied out on its own (to /Applications, say).
+ NSString *beside=[[b.bundlePath stringByDeletingLastPathComponent] stringByDeletingLastPathComponent];
+ if(!e&&[[NSFileManager defaultManager] fileExistsAtPath:[beside stringByAppendingPathComponent:@"image/googlebook.raw"]])work=beside;
  if(!work||!runner||![[NSFileManager defaultManager] fileExistsAtPath:[work stringByAppendingPathComponent:@"image/googlebook.raw"]]){
   [self fail:[NSString stringWithFormat:@"No VM image at %@/image. Run install.sh first, or rebuild the app if you moved the folder.",work?:@"(unknown)"]];return;}
  NSString *res=[[d objectForKey:@"Resolution"] description];
