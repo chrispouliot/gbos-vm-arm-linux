@@ -89,14 +89,14 @@ static unsigned short scan[128] = {
 - (void)mouseExited:(NSEvent *)e {if(self.absolute){self.inside=NO;[self setHostCursorHidden:NO];self.sendLine(@"X");return;}if(!self.seamless)return;self.inside=NO;[self setHostCursorHidden:NO];}
 - (void)capture {
  if(self.seamless||!self.relativeAllowed)return;
- if(!self.captured && self.input){self.captured=YES;[self.window makeFirstResponder:self];[self.input requestMouseMode:YES];CGAssociateMouseAndMouseCursorPosition(false);[NSCursor hide];self.window.subtitle=@"Mouse captured • Esc releases • Metal display";}
+ if(!self.captured && self.input){self.captured=YES;[self.window makeFirstResponder:self];[self.input requestMouseMode:YES];CGAssociateMouseAndMouseCursorPosition(false);[NSCursor hide];self.window.subtitle=@"Mouse captured • ⌃⌥ releases";}
 }
 - (void)releaseCapture {
  [self.input releaseKeys];
  for(NSNumber *b in @[@(kCSInputButtonLeft),@(kCSInputButtonRight),@(kCSInputButtonMiddle)]) [self.input sendMouseButton:b.unsignedIntegerValue mask:0 pressed:NO];
  self.buttons=0;
  if(self.seamless){self.inside=NO;[self setHostCursorHidden:NO];return;}
- if(self.captured){self.captured=NO;CGAssociateMouseAndMouseCursorPosition(true);[NSCursor unhide];self.window.subtitle=@"Click to capture • Esc releases";}
+ if(self.captured){self.captured=NO;CGAssociateMouseAndMouseCursorPosition(true);[NSCursor unhide];self.window.subtitle=@"Click to capture • ⌃⌥ releases";}
 }
 - (BOOL)live {return self.absolute||(self.seamless?(self.input!=nil):self.captured);}
 - (void)button:(CSInputButton)b down:(BOOL)down event:(NSEvent *)e {
@@ -130,9 +130,12 @@ static unsigned short scan[128] = {
 - (void)scrollWheel:(NSEvent *)e {
  if(self.absolute){CGFloat k=e.hasPreciseScrollingDeltas?1.0/16:1.0;if(e.scrollingDeltaX||e.scrollingDeltaY)self.sendLine([NSString stringWithFormat:@"S %.3f %.3f",-e.scrollingDeltaX*k,e.scrollingDeltaY*k]);return;}
  if([self live])[self.input sendMouseScroll:kCSInputScrollSmooth buttonMask:self.buttons dy:-e.scrollingDeltaY/10.0];}
-- (void)keyDown:(NSEvent *)e {if(!self.seamless&&e.keyCode==53){[self releaseCapture];return;}if([self live] && e.keyCode<128 && scan[e.keyCode])[self.input sendKey:kCSInputKeyPress code:scan[e.keyCode]];}
+- (void)keyDown:(NSEvent *)e {if([self live] && e.keyCode<128 && scan[e.keyCode])[self.input sendKey:kCSInputKeyPress code:scan[e.keyCode]];}
 - (void)keyUp:(NSEvent *)e {if([self live] && e.keyCode<128 && scan[e.keyCode])[self.input sendKey:kCSInputKeyRelease code:scan[e.keyCode]];}
-- (void)flagsChanged:(NSEvent *)e {if(![self live])return;NSUInteger flag=0;switch(e.keyCode){case 56:case 60:flag=NSEventModifierFlagShift;break;case 59:case 62:flag=NSEventModifierFlagControl;break;case 58:case 61:flag=NSEventModifierFlagOption;break;case 54:case 55:flag=NSEventModifierFlagCommand;break;}if(flag)[self.input sendKey:(e.modifierFlags&flag)?kCSInputKeyPress:kCSInputKeyRelease code:scan[e.keyCode]];}
+- (void)flagsChanged:(NSEvent *)e {
+ // Control+Option releases a captured mouse (the same chord UTM uses), so Esc reaches the guest.
+ if(self.captured&&(e.modifierFlags&NSEventModifierFlagControl)&&(e.modifierFlags&NSEventModifierFlagOption)){[self releaseCapture];return;}
+ if(![self live])return;NSUInteger flag=0;switch(e.keyCode){case 56:case 60:flag=NSEventModifierFlagShift;break;case 59:case 62:flag=NSEventModifierFlagControl;break;case 58:case 61:flag=NSEventModifierFlagOption;break;case 54:case 55:flag=NSEventModifierFlagCommand;break;}if(flag)[self.input sendKey:(e.modifierFlags&flag)?kCSInputKeyPress:kCSInputKeyRelease code:scan[e.keyCode]];}
 @end
 
 @interface App : NSObject<NSApplicationDelegate,NSWindowDelegate,CSConnectionDelegate>
@@ -279,15 +282,15 @@ static unsigned short scan[128] = {
 }
 - (void)updateSubtitle {
  NSInteger mode=[self pointerMode];
- if(mode==2&&self.view.relativeAllowed)self.window.subtitle=@"Captured mouse: click to capture, Esc releases • ⌃⌘M switches pointer mode";
+ if(mode==2&&self.view.relativeAllowed)self.window.subtitle=@"Captured mouse: click to capture, ⌃⌥ releases • ⌃⌘M switches pointer mode";
  else if(self.view.absolute)self.window.subtitle=self.view.guestCursor?@"Android cursor • ⌃⌘M switches pointer mode • ⌃⌘F full screen":@"Mac cursor • ⌃⌘M switches pointer mode • ⌃⌘F full screen";
- else self.window.subtitle=self.view.relativeAllowed?@"Click to capture • Esc releases":@"Waiting for Android to link the pointer…";
+ else self.window.subtitle=self.view.relativeAllowed?@"Click to capture • ⌃⌥ releases":@"Waiting for Android to link the pointer…";
 }
 // Pointer modes, cycled with Ctrl+Cmd+M and remembered:
 //   (2, the captured mouse, is the default; 0 and 1 are labelled experimental in the UI.)
 //   0 Android cursor: the helper's tablet device; Android draws the pointer (guest refresh rate).
 //   1 Mac cursor:     the helper injects events; the Mac pointer is the cursor (always an arrow).
-//   2 Captured mouse: the classic emulated USB mouse; click to capture, Esc releases.
+//   2 Captured mouse: the classic emulated USB mouse; click to capture, Control+Option releases.
 - (NSInteger)pointerMode {return [[NSUserDefaults standardUserDefaults] integerForKey:@"PointerMode"]%3;}
 - (void)sendGeometry {CGSize g=self.view.guestSize;if(self.ctlFd<0||g.width<=0)return;
  [self ctlSend:[self pointerMode]==0?[NSString stringWithFormat:@"G %.0f %.0f",g.width,g.height]:@"G 0 0"];}
@@ -324,7 +327,7 @@ static unsigned short scan[128] = {
  if(!self.settingsWindow){
   NSTextField *(^label)(NSString *)=^NSTextField *(NSString *t){NSTextField *l=[NSTextField labelWithString:t];l.alignment=NSTextAlignmentRight;return l;};
   self.pointerPopup=[self popup:@"PointerMode" titles:@[@"Captured mouse",@"Android cursor (experimental)",@"Mac cursor (experimental)"] values:@[@2,@0,@1]];
-  NSTextField *hint=[NSTextField labelWithString:@"Captured mouse: click to grab, Esc to release. ⌃⌘M cycles modes."];hint.textColor=NSColor.secondaryLabelColor;hint.font=[NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+  NSTextField *hint=[NSTextField labelWithString:@"Captured mouse: click to grab, ⌃⌥ to release. ⌃⌘M cycles modes."];hint.textColor=NSColor.secondaryLabelColor;hint.font=[NSFont systemFontOfSize:NSFont.smallSystemFontSize];
   NSTextField *note=[NSTextField wrappingLabelWithString:@"Everything below applies the next time you start the VM."];note.textColor=NSColor.secondaryLabelColor;note.font=[NSFont systemFontOfSize:NSFont.smallSystemFontSize];
   NSGridView *grid=[NSGridView gridViewWithViews:@[
    @[label(@"Pointer:"),self.pointerPopup],
@@ -401,7 +404,7 @@ static unsigned short scan[128] = {
 - (void)spiceInputAvailable:(CSConnection *)c input:(CSInput *)i{dispatch_async(dispatch_get_main_queue(),^{self.view.input=i;[i requestMouseMode:YES];});}
 - (void)spiceInputUnavailable:(CSConnection *)c input:(CSInput *)i{dispatch_async(dispatch_get_main_queue(),^{[self.view releaseCapture];self.view.input=nil;});}
 - (void)spiceError:(CSConnection *)c code:(CSConnectionError)code message:(NSString *)message{fprintf(stderr,"SPICE error %s\n",message.UTF8String);dispatch_async(dispatch_get_main_queue(),^{self.window.subtitle=message;});}
-- (void)spiceDisplayCreated:(CSConnection *)c display:(CSDisplay *)d{dispatch_async(dispatch_get_main_queue(),^{self.display=d;[d addRenderer:self.renderer];[self fit];self.window.subtitle=self.view.seamless?@"⌘V pastes into guest • ⌃⌘F full screen • ⌃⌘R re-syncs pointer":@"Click to capture • Esc releases";fprintf(stderr,"DISPLAY created %.0fx%.0f GL=%d\n",d.displaySize.width,d.displaySize.height,d.isGLEnabled);});}
+- (void)spiceDisplayCreated:(CSConnection *)c display:(CSDisplay *)d{dispatch_async(dispatch_get_main_queue(),^{self.display=d;[d addRenderer:self.renderer];[self fit];self.window.subtitle=self.view.seamless?@"⌘V pastes into guest • ⌃⌘F full screen • ⌃⌘R re-syncs pointer":@"Click to capture • ⌃⌥ releases";fprintf(stderr,"DISPLAY created %.0fx%.0f GL=%d\n",d.displaySize.width,d.displaySize.height,d.isGLEnabled);});}
 - (void)spiceDisplayUpdated:(CSConnection *)c display:(CSDisplay *)d{dispatch_async(dispatch_get_main_queue(),^{[self fit];});}
 - (void)spiceDisplayDestroyed:(CSConnection *)c display:(CSDisplay *)d{dispatch_async(dispatch_get_main_queue(),^{[d removeRenderer:self.renderer];self.display=nil;});}
 - (void)spiceAgentConnected:(CSConnection *)c supportingFeatures:(CSConnectionAgentFeature)f{}
