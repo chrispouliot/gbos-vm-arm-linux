@@ -47,9 +47,7 @@ PC
 
 say "virglrenderer (UTM fork) with the Android interop patch"
 checkout "$VIRGL_REPO" "$VIRGL_COMMIT" "$WORK/src/virglrenderer"
-if ! git -C "$WORK/src/virglrenderer" apply --reverse --check "$ROOT/patches/virglrenderer-android-interop.patch" 2>/dev/null; then
-  git -C "$WORK/src/virglrenderer" apply "$ROOT/patches/virglrenderer-android-interop.patch"
-fi
+apply_patch "$WORK/src/virglrenderer" "$ROOT/patches/virglrenderer-android-interop.patch"
 [ -f "$WORK/build/virglrenderer/build.ninja" ] || PKG_CONFIG_PATH="$WORK/pkgconfig" meson setup \
   "$WORK/build/virglrenderer" "$WORK/src/virglrenderer" --buildtype=release \
   -Dvenus=true -Dneptune=true -Dvulkan-dload=false -Dplatforms=egl -Dtests=false -Dvtest=false \
@@ -73,9 +71,7 @@ codesign --force --sign - --entitlements "$ROOT/host/hypervisor.entitlements.pli
 
 say "Googlebook VM app"
 checkout "$COCOASPICE_REPO" "$COCOASPICE_COMMIT" "$WORK/src/CocoaSpice"
-if ! git -C "$WORK/src/CocoaSpice" apply --reverse --check "$ROOT/patches/cocoaspice-viewer.patch" 2>/dev/null; then
-  git -C "$WORK/src/CocoaSpice" apply "$ROOT/patches/cocoaspice-viewer.patch"
-fi
+apply_patch "$WORK/src/CocoaSpice" "$ROOT/patches/cocoaspice-viewer.patch"
 rm -rf "$WORK/host/Googlebook Viewer.app"
 python3 "$ROOT/host/build_viewer.py" "$WORK/src/CocoaSpice" "$FW" "$ROOT/host/viewer.m" "$WORK/host" "$ROOT/run" "$WORK" >/dev/null
 

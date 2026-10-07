@@ -24,6 +24,14 @@ checkout() { # url commit dir
 }
 COCOASPICE_REPO="https://github.com/utmapp/CocoaSpice.git"
 COCOASPICE_COMMIT="d8d29fc810047a3ddcebb351cdadc8fe4b4f308d"
+# Make a pinned checkout carry exactly this patch: if it is not already applied as-is (first
+# run, or the patch changed since), reset the tree to the pinned commit and apply it.
+apply_patch() { # repo patch
+  if ! git -C "$1" apply --reverse --check "$2" 2>/dev/null; then
+    git -C "$1" checkout -q --force HEAD -- .; git -C "$1" clean -qfd
+    git -C "$1" apply "$2"
+  fi
+}
 MESA_URL="https://archive.mesa3d.org/mesa-26.2.4.tar.xz"
 MESA_SHA256="bce5f7fbebb934373b86c999a064d52fb5065878dc57f287f95346648ec832e9"
 BISON_URL="https://ftp.gnu.org/gnu/bison/bison-3.8.2.tar.xz"

@@ -78,9 +78,13 @@ done
 say "Mesa Venus Vulkan driver (with the Android mapper patch)"
 # A separate copy of the tree, so the GLES build above stays on unpatched source as tested.
 VENUS_SRC="$WORK/src/mesa-26.2.4-venus"
-if [ ! -d "$VENUS_SRC" ]; then
+PATCH_ID="$(shasum -a 256 "$ROOT/patches/mesa-android-mapper5.patch" | cut -d' ' -f1)"
+if [ "$(cat "$VENUS_SRC/.gbos-patch" 2>/dev/null)" != "$PATCH_ID" ]; then
+  # First run, or the patch changed: start again from the unpatched tree.
+  rm -rf "$VENUS_SRC" "$WORK/build/mesa-venus"
   cp -c -R "$MESA_SRC" "$VENUS_SRC" 2>/dev/null || cp -R "$MESA_SRC" "$VENUS_SRC"
   patch -s -p1 -d "$VENUS_SRC" < "$ROOT/patches/mesa-android-mapper5.patch"
+  echo "$PATCH_ID" > "$VENUS_SRC/.gbos-patch"
 fi
 [ -f "$WORK/build/mesa-venus/build.ninja" ] || meson setup "$WORK/build/mesa-venus" "$VENUS_SRC" "${COMMON[@]}" \
   --wrap-mode=nodownload -Dgallium-drivers= -Dvulkan-drivers=virtio -Degl=disabled -Dgles1=disabled \
