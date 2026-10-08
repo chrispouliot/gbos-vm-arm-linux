@@ -3,17 +3,21 @@
 #   Google's Googlebook recovery image, Google's Cuttlefish virtual-device image, and the UTM 5 beta.
 # Also installs three small Homebrew tools used to read and write the disk image.
 . "$(dirname "$0")/lib.sh"
-need curl "macOS"; need python3 "Xcode command line tools"; need hdiutil "macOS"
+need curl "macOS"; need python3 "Xcode command line tools"
 mkdir -p "$WORK" "$DOWNLOADS"
 
+if [ "$IS_MAC" = 1 ]; then
 say "Image tools (Homebrew: erofs-utils, e2fsprogs, lz4, pkgconf)"
-need brew "https://brew.sh"
+need brew "https://brew.sh"; need hdiutil "macOS"
 for f in erofs-utils e2fsprogs lz4 pkgconf; do
   brew list --formula "$f" >/dev/null 2>&1 || brew install -q "$f"
 done
+else
+  for t in dump.erofs mkfs.erofs fsck.erofs debugfs lz4 pkg-config; do need "$t" "nix develop"; done
+fi
 
 say "UTM 5.0.6 beta (QEMU, MoltenVK, ANGLE, SPICE)"
-if [ ! -d "$UTM_BETA_APP" ]; then
+if [ "$IS_MAC" = 1 ] && [ ! -d "$UTM_BETA_APP" ]; then
   fetch_big "$UTM_DMG_URL" "$DOWNLOADS/UTM-5.0.6.dmg" "$UTM_DMG_SHA256"
   mnt="$(mktemp -d)"; mounted_here=1
   if ! hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "$DOWNLOADS/UTM-5.0.6.dmg" 2>/dev/null; then
@@ -45,7 +49,7 @@ PY
   fetch_big "$url" "$DOWNLOADS/$CUTTLEFISH_ZIP" "$CUTTLEFISH_SHA256"
 fi
 if [ ! -f "$WORK/cuttlefish/manifest.json" ]; then
-  PATH="$(brew --prefix erofs-utils)/bin:$(brew --prefix e2fsprogs)/sbin:$PATH" \
+  PATH="$( [ "$IS_MAC" = 1 ] && echo "$(brew --prefix erofs-utils)/bin:$(brew --prefix e2fsprogs)/sbin:" )$PATH" \
     python3 "$ROOT/tools/unpack_cuttlefish.py" "$DOWNLOADS/$CUTTLEFISH_ZIP" "$WORK/cuttlefish"
 fi
 

@@ -1,5 +1,8 @@
 # Shared settings for the Googlebook-on-Apple-Silicon build scripts. Source, don't run.
 set -euo pipefail
+# Linux (aarch64, KVM) runs from `nix develop`: nixpkgs supplies QEMU, virglrenderer, meson and image tools.
+case "$(uname -s)" in Darwin) IS_MAC=1 ;; *) IS_MAC=0 ;; esac
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 WORK="${GOOGLEBOOK_WORK:-$ROOT/work}"
 # UTM 5.0.6 beta app bundle: supplies QEMU and the epoxy, Vulkan, MoltenVK and ANGLE frameworks.
@@ -17,7 +20,7 @@ JOBS="${GBOS_JOBS:-4}"
 # Rebuilding replaces signed binaries and the disk image. Doing that under a running VM gets
 # its processes killed by macOS ("Code Signature Invalid") or pulls the disk out from under it.
 no_running_vm() {
-  if /bin/ps -axo args= | grep -F "$WORK/host/qemu-interop" | grep -qv grep; then
+  if ps -A -o args= | grep -F -e "$WORK/host/qemu-interop" -e "file=$WORK/image/googlebook.raw" | grep -qv grep; then
     die "a VM from $WORK is running. Quit it first; rebuilding under it would crash it."
   fi
 }
@@ -50,7 +53,7 @@ LIBSEPOL_URL="https://github.com/SELinuxProject/selinux/releases/download/3.11/l
 # Download a file once and verify it (pass an empty checksum to print it instead).
 fetch() { # url dest sha256
   if [ ! -f "$2" ]; then mkdir -p "$(dirname "$2")"; curl -fL --retry 3 -o "$2.part" "$1"; mv "$2.part" "$2"; fi
-  local got; got="$(shasum -a 256 "$2" | cut -d' ' -f1)"
+  local got; got="$(sha256 "$2")"
   if [ -z "$3" ]; then echo "sha256 $got  $2"; elif [ "$got" != "$3" ]; then die "checksum mismatch for $2 (got $got)"; fi
 }
 GOOGLEBOOK_URL="https://dl.google.com/device/recovery/mica-user/16471258/recovery.zip"
@@ -67,5 +70,5 @@ DOWNLOADS="${GOOGLEBOOK_DOWNLOADS:-$WORK/downloads}"
 fetch_big() { # url dest sha256
   if [ ! -f "$2" ]; then mkdir -p "$(dirname "$2")"; curl -fL --retry 5 -C - -o "$2.part" "$1"; mv "$2.part" "$2"; fi
   echo "verifying $(basename "$2")"
-  [ "$(shasum -a 256 "$2" | cut -d' ' -f1)" = "$3" ] || die "checksum mismatch for $2"
+  [ "$(sha256 "$2")" = "$3" ] || die "checksum mismatch for $2"
 }

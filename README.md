@@ -26,6 +26,28 @@ The first boot takes about 45 seconds on a M5 MacBook. If you land on a user pic
 
 `install.sh` downloads about 9 GB and wants 60 GB free. On an M5 MacBook the build part takes around five minutes; the downloads take however long your connection takes.
 
+## Linux (NixOS, aarch64)
+
+Runs on an aarch64 Linux host with KVM (tested target: Snapdragon X2 Zenbook A14 on NixOS). Stock QEMU and
+virglrenderer do Venus with real dma-bufs, so none of the Mac host pieces are built; the guest pieces are
+cross-built with nixpkgs' clang 19 against the Android NDK r28c sysroot (the NDK has no aarch64-linux host tools).
+
+```
+nix develop            # QEMU (virgl/venus, GTK/SDL GL, PipeWire), meson, image tools, JDK, NDK sysroot + d8
+./install.sh
+python3 run/launch.py work [--display 2880x1800] [--memory 6144] [--cpus 8] [--ui gtk|sdl]
+```
+
+Vulkan (Venus, with SurfaceFlinger, HWUI and Chrome on Vulkan) is opt-in: build a second image with
+`GBOS_VULKAN=1 GBOS_IMAGE_DIR=$PWD/work/image-vk ./build-image.sh` and start it with
+`--image work/image-vk --vulkan`. The dev shell's QEMU links `virglrenderer-gbos` (`tools/virgl_*.py`), which makes
+gralloc buffers dma-buf shareable with Venus and lets the host driver lay out linear imports.
+
+The mouse is captured: click the window to grab it, Ctrl+Alt+G (GTK) or Ctrl+Alt (SDL) releases it. Shut down from
+Android or with Ctrl+C in the terminal; closing the window is disabled so it cannot pull the power. Without a usable
+`/dev/kvm` it falls back to TCG, which boots but is far too slow to use. On filesystems without reflinks
+(ext4) the image steps need about 110 GB free.
+
 ## What you need
 
 - An **Apple Silicon Mac**. Intel Macs won't work — this is an ARM guest running on the hypervisor, not emulation.

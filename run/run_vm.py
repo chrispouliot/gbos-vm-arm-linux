@@ -5,11 +5,13 @@
             [--display WxH] [--memory MIB] [--cpus N]
 
 WORK is the build folder (host/, image/, UTM-beta/). Logs and sockets go to WORK/logs/RUN_NAME.
+On Linux, QEMU comes from PATH (KVM, virglrenderer Venus, a GTK/SDL GL window, PipeWire audio)
+and --ui picks the window (gtk or sdl).
 The disk is written to unless --snapshot is given. Networking is QEMU user-mode NAT with no
 inbound forwards; --offline removes it (the pointer/clipboard helper then cannot connect).
 On stop, Android is asked to power off through the guest control channel before QEMU is killed.
 """
-import argparse, fcntl, json, os, secrets, signal, subprocess, sys
+import argparse, fcntl, json, os, secrets, shutil, signal, subprocess, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -37,13 +39,22 @@ def main():
     a.add_argument('--display', default='1920x1200'); a.add_argument('--memory', type=int, default=4096)
     a.add_argument('--cpus', type=int, default=6)
     a.add_argument('--image', help='image folder (default WORK/image)')
+    a.add_argument('--ui', default='gtk', choices=('gtk', 'sdl'), help='Linux only: QEMU window')
+    a.add_argument('--fullscreen', action='store_true', help='Linux only: start the window full screen')
+    a.add_argument('--vulkan', action='store_true',
+                   help='Linux only: image built with GBOS_VULKAN=1 (Venus); share gralloc buffers through GBM')
     args = a.parse_args()
+    linux = sys.platform.startswith('linux')
     work = Path(args.work).resolve()
     assert args.name.replace('-', '').replace('_', '').isalnum() and 10 <= args.seconds <= 86400
     image = Path(args.image).resolve() if args.image else work / 'image'
     host, utm = work / 'host', work / 'UTM-beta/UTM.app'
-    for p in (host / 'qemu-interop', host / 'qemu-aarch64-softmmu', host / 'virgl_render_server',
-              image / 'googlebook.raw', image / 'initrd.img', image / 'kernel.Image', utm / 'Contents/Frameworks'):
+    needed = (image / 'googlebook.raw', image / 'initrd.img', image / 'kernel.Image')
+    if linux:
+        if not shutil.which('qemu-system-aarch64'): sys.exit('missing: qemu-system-aarch64 (run inside nix develop)')
+    else:
+        needed += (host / 'qemu-interop', host / 'qemu-aarch64-softmmu', host / 'virgl_render_server', utm / 'Contents/Frameworks')
+    for p in needed:
         if not p.exists(): sys.exit(f'missing: {p}')
     width, height = args.display.split('x')
     (work / 'logs').mkdir(exist_ok=True)
@@ -70,18 +81,26 @@ def main():
            '-spice', 'unix=on,addr=spice.sock,disable-ticketing=on,disable-copy-paste=on,disable-agent-file-xfer=on,gl=es',
            '-chardev', 'socket,id=serial0,path=serial.sock,server=on,wait=off,logfile=serial.log',
            '-serial', 'chardev:serial0', '-qmp', 'unix:qmp.sock,server=on,wait=off']
+    if linux: cmd = linux_command(args, image, token, width, height)
     if args.snapshot: cmd.append('-snapshot')
     if not args.offline:
         cmd += ['-netdev', 'user,id=googlebooknet,ipv6=off',
                 '-device', 'usb-net,id=ethernet,netdev=googlebooknet,bus=xhci.0,mac=52:54:00:12:34:56']
     if not args.no_audio:
-        cmd += ['-audiodev', 'coreaudio,id=audio0', '-device', 'usb-audio,audiodev=audio0,bus=xhci.0']
-    env = dict(os.environ, VM_QEMU_LIBRARY=str(host / 'qemu-aarch64-softmmu'),
+        backend = 'pipewire' if linux else 'coreaudio'
+        cmd += ['-audiodev', f'{backend},id=audio0', '-device', 'usb-audio,audiodev=audio0,bus=xhci.0']
+    env = dict(os.environ) if linux else dict(os.environ, VM_QEMU_LIBRARY=str(host / 'qemu-aarch64-softmmu'),
                DYLD_FRAMEWORK_PATH=str(utm / 'Contents/Frameworks'),
                RENDER_SERVER_EXEC_PATH=str(host / 'virgl_render_server'),
                VK_DRIVER_FILES=str(utm / 'Contents/Resources/vulkan/icd.d/MoltenVK_icd.json'),
                ANGLE_DEFAULT_PLATFORM='metal', XDG_RUNTIME_DIR=str(out), TMPDIR=str(out))
     env.pop('APP_SANDBOX_GROUP_ID', None)
+    if linux:
+        env['TMPDIR'] = str(out)
+        # QEMU's GTK pointer grab needs X11; under Wayland the mouse is never captured.
+        if args.ui == 'gtk': env.setdefault('GDK_BACKEND', 'x11')
+        # vrend allocates Venus-shareable (GBM, dma-buf) buffers only with this set.
+        if args.vulkan: env['VIRGL_GBM_LAYOUT_FORCE_ENABLE'] = '1'
     (out / 'command.json').write_text(json.dumps({'command': cmd, 'seconds': args.seconds}, indent=2))
     with (out / 'host.log').open('wb') as log:
         proc = subprocess.Popen(cmd, cwd=out, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -102,6 +121,34 @@ def main():
                 except subprocess.TimeoutExpired: os.killpg(proc.pid, signal.SIGKILL); rc = proc.wait()
         (out / 'result.json').write_text(json.dumps({'exit_code': rc}))
         print('exit', rc, flush=True)
+
+
+def linux_command(args, image, token, width, height):
+    """Same machine as the Mac launcher, on stock QEMU: KVM (TCG if /dev/kvm is unusable), guest RAM
+    in a shared memfd so Venus blob resources can be dma-buf'd to the host GPU, and QEMU's own GL
+    window instead of SPICE + the Cocoa viewer. Mouse is captured (click to grab, Ctrl+Alt+G to release)."""
+    kvm = os.access('/dev/kvm', os.R_OK | os.W_OK)
+    if not kvm: print('warning: /dev/kvm not usable, using TCG (expect a very slow boot)', file=sys.stderr, flush=True)
+    accel = ['-accel', 'kvm', '-cpu', 'host'] if kvm else \
+            ['-accel', 'tcg,thread=multi,tb-size=1024', '-cpu', 'max,pauth-impdef=on']
+    # Closing the window must not yank power: shut down from Android or Ctrl+C the launcher.
+    # zoom-to-fit: QEMU sizes the window from its placeholder, not the guest's GL scanout, so
+    # launch.py resizes the window (xdotool) and the guest is scaled into it.
+    ui = ('gtk,gl=on,zoom-to-fit=on,show-menubar=off' if args.ui == 'gtk' else 'sdl,gl=on') + ',window-close=off'
+    return ['qemu-system-aarch64', '-name', 'Googlebook', '-nodefaults', '-vga', 'none', '-nic', 'none',
+            '-machine', 'virt,gic-version=3,highmem=on,highmem-ecam=off,memory-backend=ram0',
+            '-object', f'memory-backend-memfd,id=ram0,size={args.memory}M,share=on',
+            *accel, '-m', str(args.memory), '-smp', f'cpus={args.cpus},sockets=1,cores={args.cpus},threads=1',
+            '-device', f'virtio-gpu-gl-pci,hostmem=8G,blob=true,venus=true,xres={width},yres={height}',
+            '-display', ui, *(['-full-screen'] if args.fullscreen else []),
+            '-kernel', str(image / 'kernel.Image'), '-initrd', str(image / 'initrd.img'),
+            '-append', CMDLINE + ' androidboot.gbos_token=' + token,
+            '-drive', f'if=none,media=disk,id=driveimage,format=raw,file={image / "googlebook.raw"}',
+            '-device', 'virtio-blk-pci,drive=driveimage', '-device', 'virtio-serial', '-no-reboot',
+            '-device', 'qemu-xhci,id=xhci,addr=0x5', '-device', 'usb-kbd,id=keyboard,bus=xhci.0',
+            '-device', 'usb-mouse,id=mouse,bus=xhci.0',
+            '-chardev', 'socket,id=serial0,path=serial.sock,server=on,wait=off,logfile=serial.log',
+            '-serial', 'chardev:serial0', '-qmp', 'unix:qmp.sock,server=on,wait=off']
 
 
 if __name__ == '__main__':

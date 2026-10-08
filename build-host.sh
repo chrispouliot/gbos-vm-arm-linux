@@ -4,6 +4,16 @@
 # Output: $WORK/host/{qemu-interop,qemu-aarch64-softmmu,libvirglrenderer.1.dylib,virgl_render_server}
 . "$(dirname "$0")/lib.sh"
 no_running_vm
+if [ "$IS_MAC" = 0 ]; then
+  # Linux: nothing to build. Stock QEMU + virglrenderer from nixpkgs do Venus with real dma-bufs,
+  # so the Metal/shared-memory interop patch and the SPICE viewer are not needed.
+  need qemu-system-aarch64 "nix develop"; need meson "nix develop"; need ninja "nix develop"
+  qemu-system-aarch64 -device virtio-gpu-gl-pci,help 2>/dev/null | grep -q venus \
+    || die "this QEMU has no virtio-gpu-gl venus support (needs virglrenderer with -Dvenus=true)"
+  if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then echo "KVM: /dev/kvm usable"
+  else echo "warning: /dev/kvm missing or not accessible; the VM will fall back to TCG emulation (very slow)"; fi
+  say "Host check complete (Linux)"; exit 0
+fi
 need git "Xcode command line tools"; need clang "Xcode command line tools"
 need python3 "Homebrew or Xcode"; need pkg-config "brew install pkg-config"
 FW="$UTM_BETA_APP/Contents/Frameworks"

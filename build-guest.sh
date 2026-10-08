@@ -6,24 +6,34 @@
 . "$(dirname "$0")/lib.sh"
 ANDROID_SDK="${ANDROID_SDK:-$HOME/Library/Android/sdk}"
 ANDROID_NDK="${ANDROID_NDK:-$ANDROID_SDK/ndk/28.2.13676358}"
-NDK_BIN="$ANDROID_NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+# On Linux the flake's gbos-android-sdk fills linux-x86_64/bin with clang-19 wrappers around the NDK sysroot.
+NDK_HOST="$( [ "$IS_MAC" = 1 ] && echo darwin-x86_64 || echo linux-x86_64 )"
+NDK_BIN="$ANDROID_NDK/toolchains/llvm/prebuilt/$NDK_HOST/bin"
 [ -x "$NDK_BIN/aarch64-linux-android35-clang" ] || die "Android NDK 28 not found at $ANDROID_NDK (set ANDROID_NDK)"
 D8="$(ls "$ANDROID_SDK"/build-tools/*/d8 2>/dev/null | sort | tail -1)"; [ -n "$D8" ] || die "Android build-tools (d8) not found under $ANDROID_SDK"
 ANDROID_JAR="$(ls "$ANDROID_SDK"/platforms/android-3[4-9]*/android.jar 2>/dev/null | sort | tail -1)"; [ -n "$ANDROID_JAR" ] || die "Android platform (android.jar) not found under $ANDROID_SDK"
 if [ -z "${JAVA_HOME:-}" ]; then
-  for c in "/Applications/Android Studio.app/Contents/jbr/Contents/Home" "$(/usr/libexec/java_home 2>/dev/null || true)" /opt/homebrew/opt/openjdk; do
+  for c in "/Applications/Android Studio.app/Contents/jbr/Contents/Home" "$(/usr/libexec/java_home 2>/dev/null || true)" /opt/homebrew/opt/openjdk \
+           "$(dirname "$(dirname "$(readlink -f "$(command -v javac || echo /)")")")"; do
     [ -x "$c/bin/javac" ] && JAVA_HOME="$c" && break
   done
 fi
 [ -x "${JAVA_HOME:-}/bin/javac" ] || die "no JDK found (set JAVA_HOME)"
 export JAVA_HOME
-[ -x "$WORK/env/bin/meson" ] || die "run build-host.sh first (it creates the meson environment)"
+if [ "$IS_MAC" = 1 ]; then
+  [ -x "$WORK/env/bin/meson" ] || die "run build-host.sh first (it creates the meson environment)"
+else
+  need meson "nix develop"
+  # Keep the host's .pc files (nix develop) out of the Android cross builds.
+  unset PKG_CONFIG_PATH PKG_CONFIG_PATH_FOR_TARGET
+fi
 export PATH="$WORK/env/bin:$PATH" CCACHE_DISABLE=1
 mkdir -p "$WORK/src" "$WORK/build" "$WORK/guest/mesa-runtime" "$WORK/tools" "$WORK/android-pkgconfig"
 
 say "bison 3 (macOS ships 2.3, which cannot process Mesa's grammars)"
 BREW_BISON="$(brew --prefix bison 2>/dev/null || true)/bin"
 if [ -x "$BREW_BISON/bison" ]; then BISON_DIR="$BREW_BISON"
+elif [ "$IS_MAC" = 0 ] && bison --version 2>/dev/null | head -1 | grep -q ' 3\.'; then BISON_DIR="$(dirname "$(command -v bison)")"
 else
   BISON_DIR="$WORK/tools/bison/bin"
   if [ ! -x "$BISON_DIR/bison" ]; then
@@ -42,7 +52,7 @@ fetch "$MESA_URL" "$WORK/downloads/mesa-26.2.4.tar.xz" "$MESA_SHA256"
 
 cat > "$WORK/android-aarch64.cross" <<CROSS
 [constants]
-ndk = '$ANDROID_NDK/toolchains/llvm/prebuilt/darwin-x86_64'
+ndk = '$ANDROID_NDK/toolchains/llvm/prebuilt/$NDK_HOST'
 [binaries]
 c = ndk / 'bin/aarch64-linux-android35-clang'
 cpp = [ndk / 'bin/aarch64-linux-android35-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
@@ -78,11 +88,12 @@ done
 say "Mesa Venus Vulkan driver (with the Android mapper patch)"
 # A separate copy of the tree, so the GLES build above stays on unpatched source as tested.
 VENUS_SRC="$WORK/src/mesa-26.2.4-venus"
-PATCH_ID="$(shasum -a 256 "$ROOT/patches/mesa-android-mapper5.patch" | cut -d' ' -f1)"
+PATCH_ID="$(sha256 "$ROOT/patches/mesa-android-mapper5.patch")"
 if [ "$(cat "$VENUS_SRC/.gbos-patch" 2>/dev/null)" != "$PATCH_ID" ]; then
   # First run, or the patch changed: start again from the unpatched tree.
   rm -rf "$VENUS_SRC" "$WORK/build/mesa-venus"
-  cp -c -R "$MESA_SRC" "$VENUS_SRC" 2>/dev/null || cp -R "$MESA_SRC" "$VENUS_SRC"
+  if [ "$IS_MAC" = 1 ]; then cp -c -R "$MESA_SRC" "$VENUS_SRC" 2>/dev/null || cp -R "$MESA_SRC" "$VENUS_SRC"
+  else cp -R --reflink=auto "$MESA_SRC" "$VENUS_SRC"; fi
   patch -s -p1 -d "$VENUS_SRC" < "$ROOT/patches/mesa-android-mapper5.patch"
   echo "$PATCH_ID" > "$VENUS_SRC/.gbos-patch"
 fi
