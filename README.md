@@ -1,163 +1,71 @@
-# gbos-vm
+# gbos-vm-arm-linux
 
-Runs a real Googlebook OS image in a VM on an Apple Silicon Mac — GPU-accelerated, with Chrome working.
+A fork of [skylartaylor/gbos-vm](https://github.com/skylartaylor/gbos-vm) that runs the Googlebook OS VM on an
+aarch64 Linux host with KVM, built and run from NixOS. Tested on an Asus Zenbook A14 (Snapdragon X2 Elite,
+Adreno X2-90, turnip). Everything about the image itself (what is downloaded, how the vendor partition is rebuilt,
+the security caveats) is unchanged; read the upstream README for that.
 
-It's not an emulator image or a generic Android build. The install script downloads Google's own recovery image for the Dell Googlebook (ARM64, Android 17), swaps the hardware-specific bits for virtual ones, and boots it under QEMU with Vulkan passed through to Metal.
+## What this fork changes
 
-> This isn't affiliated with Google or Dell, and it's not a verified Googlebook. Read [System Structure](#system-structure) before you sign into anything.
+- **`flake.nix`**: a dev shell with everything the build and the VM need (QEMU with virglrenderer/Venus, GTK/SDL GL
+  and PipeWire, meson, erofs-utils, e2fsprogs, lz4, JDK, xdotool), and `gbos-android-sdk`: the NDK r28c sysroot,
+  d8 and `android.jar`, driven by nixpkgs' clang 19, so the guest pieces cross-build on aarch64-linux (the NDK has no
+  aarch64 host tools).
+- **Build scripts**: Linux branches instead of Homebrew/UTM/`hdiutil`; `sha256sum`, reflink copies, `SOURCE_DATE_EPOCH`
+  unset for the vendor rebuild; `patches/mesa-android-mapper5.patch` fixed to apply with GNU `patch`. No Mac host
+  pieces are built: stock QEMU + virglrenderer do the GPU path with real dma-bufs.
+- **`run/run_vm.py`, `run/launch.py`**: QEMU with KVM (TCG fallback), guest RAM in a shared memfd, `virtio-gpu-gl`
+  with Venus, QEMU's own GTK or SDL GL window instead of the Cocoa viewer, PipeWire audio, and the launch options
+  below.
+- **Two images.** The default is GLES-only: SurfaceFlinger, HWUI and Chrome render through virgl. `GBOS_VULKAN=1`
+  builds a Venus image with SurfaceFlinger/HWUI/Chrome on Vulkan.
+- **`virglrenderer-gbos`** (`tools/virgl_venus_share.py`, `tools/virgl_vkr_linear.py`): the dev shell's QEMU links a
+  patched virglrenderer that makes Android gralloc buffers shareable with Venus on a Linux host: render targets are
+  allocated through GBM so they export as dma-bufs, and linear imports use the host driver's own layout.
+  `virglrenderer-debug` adds logging (`tools/virgl_gbm_debug.py`).
 
-## Quick start
+## Build
 
-```bash
-git clone https://github.com/skylartaylor/gbos-vm.git
-cd gbos-vm
-./install.sh
+Needs an aarch64 Linux host with a usable `/dev/kvm`, Nix with flakes, and about 60 GB free (110 GB on filesystems
+without reflinks, such as ext4).
+
+```sh
+nix develop
+./install.sh                                                     # GLES image in work/image
+GBOS_VULKAN=1 GBOS_IMAGE_DIR=$PWD/work/image-vk ./build-image.sh # optional Vulkan image
 ```
 
-Then open the app it built:
+## Launch options
 
-```bash
-open "work/host/Googlebook VM.app"
+```sh
+python3 run/launch.py work [options]
 ```
 
-Drag that into your Dock if you want it there. It boots the VM when you open it and shuts Android down properly when you quit.
+| Option | Default | |
+|---|---|---|
+| `--display WxH` | `1920x1200` | Guest resolution. |
+| `--window WxH` | `--display` | Window size in X11 pixels (physical pixels with `xwayland-native-scaling`, logical without); the guest is scaled to fit. Match `--display` for 1:1 pixels. |
+| `--density DPI` | `240 × width / 1920` | Android display density. 160 × your GNOME scale matches the host UI size (150% → 240). |
+| `--fullscreen` | off | Start full screen. Ctrl+Alt+F toggles. |
+| `--memory MIB` | `4096` | Guest RAM. |
+| `--cpus N` | `6` | vCPUs. |
+| `--image DIR` | `work/image` | Image folder, e.g. `work/image-vk`. |
+| `--vulkan` | off | Required for an image built with `GBOS_VULKAN=1`. |
+| `--ui gtk\|sdl` | `gtk` | QEMU window. GTK runs through XWayland so the mouse grab works under Wayland. |
+| `--offline` | off | No network. |
+| `--no-audio` | off | No audio device. |
 
-The first boot takes about 45 seconds on a M5 MacBook. If you land on a user picker, click **User** — there's no password.
+Examples, for a 4K panel at 150%:
 
-`install.sh` downloads about 9 GB and wants 60 GB free. On an M5 MacBook the build part takes around five minutes; the downloads take however long your connection takes.
-
-## Linux (NixOS, aarch64)
-
-Runs on an aarch64 Linux host with KVM (tested target: Snapdragon X2 Zenbook A14 on NixOS). Stock QEMU and
-virglrenderer do Venus with real dma-bufs, so none of the Mac host pieces are built; the guest pieces are
-cross-built with nixpkgs' clang 19 against the Android NDK r28c sysroot (the NDK has no aarch64-linux host tools).
-
-```
-nix develop            # QEMU (virgl/venus, GTK/SDL GL, PipeWire), meson, image tools, JDK, NDK sysroot + d8
-./install.sh
-python3 run/launch.py work [--display 2880x1800] [--memory 6144] [--cpus 8] [--ui gtk|sdl]
-```
-
-Vulkan (Venus, with SurfaceFlinger, HWUI and Chrome on Vulkan) is opt-in: build a second image with
-`GBOS_VULKAN=1 GBOS_IMAGE_DIR=$PWD/work/image-vk ./build-image.sh` and start it with
-`--image work/image-vk --vulkan`. The dev shell's QEMU links `virglrenderer-gbos` (`tools/virgl_*.py`), which makes
-gralloc buffers dma-buf shareable with Venus and lets the host driver lay out linear imports.
-
-The mouse is captured: click the window to grab it, Ctrl+Alt+G (GTK) or Ctrl+Alt (SDL) releases it. Shut down from
-Android or with Ctrl+C in the terminal; closing the window is disabled so it cannot pull the power. Without a usable
-`/dev/kvm` it falls back to TCG, which boots but is far too slow to use. On filesystems without reflinks
-(ext4) the image steps need about 110 GB free.
-
-## What you need
-
-- An **Apple Silicon Mac**. Intel Macs won't work — this is an ARM guest running on the hypervisor, not emulation.
-- **16 GB of RAM**, realistically. The VM gets 4 GB and the builds want a few more.
-- **Xcode command line tools** and **[Homebrew](https://brew.sh)**.
-- The **Android SDK** with NDK `28.2.13676358`, a build-tools version, and a platform (API 34+). Android Studio's defaults are fine.
-- A **JDK**. If you have Android Studio, its bundled one gets picked up automatically.
-
-The script installs `erofs-utils`, `e2fsprogs`, `lz4` and `pkgconf` from Homebrew if they're missing. It never asks for `sudo`.
-
-We've only run this on one machine (M5, 16 GB, macOS 27). It *should* work on other Apple Silicon Macs, but nobody's tried yet — if you do, tell us how it went.
-
-## Using it
-
-| Shortcut | What it does |
-|---|---|
-| `⌃⌘F` | Full screen |
-| `⌃⌘M` | Cycle pointer modes |
-| `⌃⌥` | Release a captured mouse |
-| `⌃⌘R` | Restart the VM |
-| `⌘V` | Paste the Mac clipboard into the guest |
-| `⌘,` | Settings |
-
-Quitting (or closing the window) shuts Android down properly. Your data lives in `work/image/googlebook.raw` and sticks around between runs.
-
-**Settings** (`⌘,`) has the pointer mode, resolution, memory, CPU cores, and toggles for networking and audio. Pointer mode changes right away; everything else is a VM option, so it applies the next time you start it.
-
-Resolution defaults to your display's native pixels at 16:10. On a notched MacBook that's exactly the area below the notch, so full screen is pixel-for-pixel.
-
-If you'd rather drive it from a terminal, `python3 run/launch.py work` does the same thing and takes `--display 1920x1200` and `--fullscreen`.
-
-### Pointer modes
-
-**Captured mouse** is the default: click the window to grab the mouse, `⌃⌥` to let go. It's the classic VM experience — a plain USB mouse as far as Android is concerned, so it behaves.
-
-There are two integrated modes where the pointer moves in and out of the window freely. They're labelled **experimental** because they're still kind of buggy:
-
-- **Android cursor.** The guest draws the pointer, so it changes shape properly (I-beams, resize arrows). It trails your hand a little, and Android sees it as a stylus, which gets weird in places.
-- **Mac cursor.** Instant, but it's always an arrow.
-
-Switch in the **Pointer** menu, in Settings, or with `⌃⌘M`. Your choice is remembered, and clipboard sync works in all three.
-
-## System Structure
-
-The image starts as Google's unmodified recovery download. We don't touch the system partitions — but Googlebook OS expects hardware our VM doesn't have (a TPM, Trusty, a Qualcomm DSP, a specific GPU), so the **vendor partition gets rebuilt** with virtual-device replacements from Google's own Cuttlefish project:
-
-- **Software KeyMint and Gatekeeper** instead of hardware-backed ones. Your keys aren't protected by a secure element, because there isn't one.
-- **No verified boot on the vendor partition.** The other partitions keep their original verity; the one we modify can't.
-- **Three extra SELinux rules**, all narrowly about graphics buffer sharing. SELinux stays enforcing.
-- **A helper running as the Android shell user** that takes pointer and clipboard input from the viewer. It only accepts a host that presents a random per-boot token, and it listens to nothing — it connects out to `127.0.0.1` on your Mac.
-
-So: treat it like a dev VM. It's great for poking at the OS. I wouldn’t daily drive it or anything, but I’m sure some freaks (laudatory) will try.
-
-## What doesn't work yet
-
-- **Bluetooth.** It crashes on boot and Android will tell you about it. Dismiss the dialog.
-- **A TPM daemon crash-loops in the background.** It's harmless but it wastes a bit of CPU. We haven't found a clean way to stop it yet.
-- **60 fps cap** on the guest display. The QEMU build we use doesn't expose a refresh rate setting.
-- **Flat shading can be wrong.** Chrome needs a Vulkan extension MoltenVK doesn't have, so we tell the guest it exists. That's fine for almost everything; `flat`-interpolated WebGL content may pick the wrong vertex.
-- **Copying *out* of the guest, right-click, and long sessions** are implemented but haven't had a proper test. They might be fine. They might not.
-- **Audio was silent on one boot** and then worked. We don't know why yet.
-
-## The Custom Bits
-
-Three things had to be built for this:
-
-**Buffer sharing between GLES and Vulkan.** Android hands the same graphics buffer to both APIs. On Linux that's a dma-buf; macOS has no such thing. We back each shared buffer with POSIX shared memory and import it into both Metal and MoltenVK — patch in `patches/virglrenderer-android-interop.patch`.
-
-**Row pitch.** Metal wants texture rows padded to 16 bytes; Android doesn't. The fix turned out to be small: that memory only ever lives on the Mac side, so the host can use whatever pitch Metal wants and the guest never needs to know.
-
-**A pointer that isn't a mouse.** Android wouldn't accept QEMU's absolute tablet, and steering a relative mouse to match your real cursor drifts. So a tiny helper inside the guest creates a virtual drawing tablet — which Android treats as an absolute pointer — and the viewer feeds it coordinates. This doesn’t work as well as we’d like, so capturing the cursor is most reliable still. We’re hoping to improve it.
-
-The rest is plumbing: `fetch.sh` gets the images, `build-host.sh` builds the patched renderer and viewer, `build-guest.sh` cross-compiles Mesa for Android, and `build-image.sh` assembles the disk.
-
-## Layout
-
-```
-install.sh          runs the four steps below in order
-fetch.sh            downloads + verifies the Googlebook image, Cuttlefish, and UTM
-build-host.sh       patched virglrenderer, QEMU launcher, viewer
-build-guest.sh      Mesa (GLES + Vulkan), pointer helper, SELinux policy tool
-build-image.sh      assembles the bootable disk
-run/                VM runner and a command-line launcher (the app bundles these)
-image/              the scripts that rebuild the vendor partition
-guest/  host/       sources for the bits we wrote
-patches/            our changes to virglrenderer, Mesa and CocoaSpice
+```sh
+python3 run/launch.py work --display 3840x2160 --density 240 --fullscreen --image work/image-vk --vulkan
+python3 run/launch.py work --display 2880x1620 --density 240 --image work/image-vk --vulkan
 ```
 
-Everything lands in `work/` (set `GOOGLEBOOK_WORK` to put it elsewhere). If you already have the big downloads, point `GOOGLEBOOK_DOWNLOADS` at them and they won't be fetched again. Builds use four jobs by default — raise `GBOS_JOBS` if you have the RAM, but an uncapped Mesa build will happily push a 16 GB Mac into swap (ask me how I know).
-
-## What gets downloaded, and from where
-
-Nothing from Google or UTM is redistributed here. The script fetches each of these on your machine and checks it against a pinned SHA-256:
-
-- Googlebook recovery image — `dl.google.com` (build `16471258`)
-- Cuttlefish virtual device image — `ci.android.com` (build `16373615`)
-- UTM 5.0.6 beta — the official GitHub release (for its QEMU, MoltenVK and ANGLE)
-- Mesa 26.2.4, libsepol 3.11, bison 3.8.2 — their upstream release tarballs
-
-## Credits
-
-This leans entirely on other people's work: [UTM](https://github.com/utmapp/UTM) and its forks of virglrenderer and CocoaSpice, [Mesa](https://mesa3d.org), [MoltenVK](https://github.com/KhronosGroup/MoltenVK), QEMU, and the Android Cuttlefish team, whose virtual-device components are what make the image boot at all. The pointer helper uses the same trick as [scrcpy](https://github.com/Genymobile/scrcpy).
+Click the window to capture the mouse; Ctrl+Alt+G (GTK) or Ctrl+Alt (SDL) releases it. Closing the window is disabled
+so it cannot cut power to Android: shut down from Android or with Ctrl+C in the terminal. If Android starts treating
+every key as a shortcut, a modifier is stuck: press and release Super, Ctrl, Alt and Shift inside the VM.
 
 ## License
 
-MIT for everything we wrote — see [LICENSE](LICENSE). The patches apply to MIT-licensed projects, except `patches/cocoaspice-viewer.patch`, which modifies Apache-2.0 code and stays under that license.
-
-## AI Usage
-
-The following AI tools were used to assist in this project:
-- OpenAI GPT 6 Astra
-- DeepSeek 4.1 Flash
-- Anthropic Claude Opus 5.5
+MIT, as upstream; `patches/cocoaspice-viewer.patch` stays Apache-2.0.
